@@ -36,6 +36,11 @@ Co stojí za vyzkoušení:
 
 Zem pod nohama se nemění nikdy, ta je společná pro všechny.
 
+**Když ti napíšu, že je nová verze:** načti stránku s **Ctrl+F5**
+(podrž Ctrl a zmáčkni F5). Prohlížeč si soubory chvíli pamatuje a bez
+toho bys mohl deset minut hrát starou verzi, i když ti verze nahoře
+ukazuje novou.
+
 Kdyby se něco propadalo, trhalo nebo zlobilo znova — pošli hlášení
 stejně jako minule. Nese v sobě číslo verze, takže je z něj poznat, co
 přesně jsi měl před sebou.
