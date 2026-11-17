@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Which build this is. Stamped when a copy is put somewhere for
+     somebody else to test; "dev" means it came straight off disk. -->
+<meta name="dreamworld-build" content="fe4a7ea · 2026-11-17">
+<title>Dream World</title>
+<style>
+  :root {
+    --ink: #e8e8ea;
+    --ink-dim: #a2a2ab;
+    --panel: rgba(18, 18, 22, 0.72);
+    --line: rgba(255, 255, 255, 0.12);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #cfcfca;
+    font: 12px/1.45 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #view { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+  /* ------------------------------------------------------------- HUD */
+  .hud {
+    position: fixed;
+    top: 10px; left: 12px;
+    padding: 7px 10px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    backdrop-filter: blur(6px);
+    pointer-events: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .hud-cost { font-size: 13px; font-weight: 600; letter-spacing: 0.2px; }
+  .hud-info { color: var(--ink-dim); margin-top: 2px; }
+
+  /* ----------------------------------------------------------- panel */
+  .panel {
+    position: fixed;
+    top: 10px; right: 12px;
+    width: 290px;
+    max-height: calc(100vh - 20px);
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    backdrop-filter: blur(6px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+  }
+  .panel.hidden {
+    opacity: 0;
+    transform: translateX(10px);
+    pointer-events: none;
+  }
+  .panel-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .panel-title { font-weight: 600; letter-spacing: 0.3px; }
+  .panel-hint { color: var(--ink-dim); font-size: 11px; }
+  .panel-body { overflow-y: auto; padding: 4px 10px 10px; }
+
+  .group { padding: 8px 0 4px; }
+  .group + .group { border-top: 1px solid var(--line); }
+  .group-title { font-weight: 600; margin-bottom: 1px; }
+  .group-note { color: var(--ink-dim); font-size: 11px; margin-bottom: 6px; }
+
+  .row {
+    display: grid;
+    grid-template-columns: 104px 1fr 42px;
+    align-items: center;
+    gap: 6px;
+    margin: 3px 0;
+  }
+  .row.buttons { grid-template-columns: 1fr 1fr; margin-top: 8px; }
+  .row-label { color: var(--ink-dim); }
+  .row-value {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 16px;
+    background: transparent;
+    cursor: ew-resize;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 2px;
+    background: rgba(255, 255, 255, 0.25);
+    border-radius: 2px;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 11px; height: 11px;
+    margin-top: -4.5px;
+    border-radius: 50%;
+    background: var(--ink);
+  }
+  input[type="range"]::-moz-range-track {
+    height: 2px;
+    background: rgba(255, 255, 255, 0.25);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 11px; height: 11px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--ink);
+  }
+
+  input.text {
+    grid-column: span 1;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--ink);
+    padding: 3px 6px;
+    font: inherit;
+    min-width: 0;
+  }
+
+  .btn {
+    background: rgba(255, 255, 255, 0.09);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--ink);
+    padding: 4px 6px;
+    font: inherit;
+    cursor: pointer;
+  }
+  .btn:hover { background: rgba(255, 255, 255, 0.16); }
+
+  /* ------------------------------------------------------------ hint */
+  .hint {
+    position: fixed;
+    left: 50%;
+    bottom: 42px;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 10px 18px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    backdrop-filter: blur(6px);
+    text-align: center;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  .hint strong { font-size: 13px; font-weight: 600; }
+  .hint span { color: var(--ink-dim); }
+  .hint.hidden { opacity: 0; }
+
+  .failure {
+    position: fixed;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    max-width: 460px;
+    padding: 14px 18px;
+    background: #2a1416;
+    border: 1px solid #6b2b31;
+    border-radius: 6px;
+    color: #ffd9dc;
+    font-size: 13px;
+  }
+  .failure .btn { border-color: #8a3b42; background: rgba(255, 255, 255, 0.1); }
+  .failure textarea {
+    width: 100%;
+    height: 120px;
+    background: #190c0e;
+    border: 1px solid #6b2b31;
+    border-radius: 4px;
+    color: #ffd9dc;
+    font: 11px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<script>
+  // Not a module, and before the world loads.
+  //
+  // A module that fails to parse never reaches its own error handler, so a
+  // mistake in the world's first line would leave a blank page and put the
+  // reason in a console. Nobody here is going to open a console: that is
+  // the whole point of this block. Anything that goes wrong is written
+  // down, shown on screen, and offered as one block of text to paste.
+  (function () {
+    var troubles = [];
+    window.dreamTroubles = troubles;
+
+    // What can be said about this machine without the world having
+    // started. The world adds what it knows on top, when it is running.
+    window.dreamReport = function () {
+      var lines = [];
+      lines.push('Dream World — hlášení');
+      lines.push('čas: ' + new Date().toISOString());
+      lines.push('adresa: ' + location.href);
+      var stamp = document.querySelector('meta[name="dreamworld-build"]');
+      lines.push('verze: ' + (stamp ? stamp.content : 'neznámá'));
+      lines.push('prohlížeč: ' + navigator.userAgent);
+      lines.push('okno: ' + window.innerWidth + '×' + window.innerHeight
+        + ' @ ' + (window.devicePixelRatio || 1) + '×'
+        + '  obrazovka: ' + screen.width + '×' + screen.height);
+      try {
+        var gl = document.createElement('canvas').getContext('webgl2');
+        var info = gl && gl.getExtension('WEBGL_debug_renderer_info');
+        lines.push('webgl2: ' + (gl ? 'ano' : 'NE'));
+        if (info) {
+          lines.push('karta: ' + gl.getParameter(info.UNMASKED_RENDERER_WEBGL));
+        }
+      } catch (err) {
+        lines.push('webgl2: nelze zjistit (' + err.message + ')');
+      }
+      if (window.dreamReportExtra) {
+        try {
+          lines = lines.concat(window.dreamReportExtra());
+        } catch (err) {
+          lines.push('svět se na sebe nedokázal podívat: ' + err.message);
+        }
+      }
+      lines.push('chyby: ' + (troubles.length || 'žádné'));
+      for (var i = 0; i < troubles.length; i++) {
+        lines.push('  ' + new Date(troubles[i].at).toLocaleTimeString()
+          + '  ' + troubles[i].what);
+      }
+      return lines.join(String.fromCharCode(10));
+    };
+
+    // The copy, with a hand-copy fallback: writeText needs a secure page,
+    // and a tester on a plain address would otherwise be told nothing.
+    window.dreamCopyReport = function (holder, button) {
+      var text = window.dreamReport();
+      var done = function () { button.textContent = 'zkopírováno'; };
+      var manual = function () {
+        button.textContent = 'zkopíruj to ručně';
+        var box = holder.querySelector('textarea');
+        if (!box) {
+          box = document.createElement('textarea');
+          box.readOnly = true;
+          holder.appendChild(box);
+        }
+        box.value = text;
+        box.focus();
+        box.select();
+      };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done, manual);
+      } else {
+        manual();
+      }
+    };
+
+    function note(what) {
+      troubles.push({ at: Date.now(), what: what });
+      if (troubles.length > 20) troubles.shift();
+
+      var box = document.getElementById('failure');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = 'failure';
+        box.className = 'failure';
+        var text = document.createElement('div');
+        text.id = 'failure-text';
+        var btn = document.createElement('button');
+        btn.className = 'btn';
+        btn.textContent = 'zkopírovat hlášení';
+        btn.addEventListener('click', function () {
+          window.dreamCopyReport(box, btn);
+        });
+        box.appendChild(text);
+        box.appendChild(btn);
+        document.body.appendChild(box);
+      }
+      document.getElementById('failure-text').textContent =
+        'Něco se rozbilo: ' + what
+        + ' — zkopíruj hlášení a pošli ho.';
+    }
+
+    // So the world can put its own refusals in the same box, with the same
+    // copy button, instead of growing a second one.
+    window.dreamNote = note;
+
+    window.addEventListener('error', function (e) {
+      // A script or a stylesheet that did not arrive raises a plain event
+      // with no message on it, and the address is the only useful thing.
+      if (e.target && e.target !== window && e.target.src) {
+        note('nenačetlo se: ' + e.target.src);
+      } else {
+        note(e.message || 'neznámá chyba');
+      }
+    }, true);
+    window.addEventListener('unhandledrejection', function (e) {
+      var why = e.reason && e.reason.message ? e.reason.message : e.reason;
+      note('nevyřízená chyba: ' + why);
+    });
+  }());
+</script>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

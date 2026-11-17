@@ -1,0 +1,498 @@
+// main.js — puts the world on screen and keeps it running.
+//
+// Order of things: the shared ground first, then the traces that mark it,
+// then the personal air laid over both. Nothing here holds world state; it
+// only wires the pure functions to a renderer, a body and a clock.
+
+import * as THREE from 'three';
+import {
+  DEFAULT_BASE, BREATH_PERIOD, GUST_PERIOD, baseHeight,
+  makeWorldUniforms, applyBaseToUniforms,
+} from './world.js';
+import {
+  DEFAULT_IDENTITY, DEFAULT_GROWTH, deviationFrom, paletteFrom,
+  lightDirection, partyFrom, MAX_BANDS,
+} from './deviation.js';
+import { WorldClock, scrollPhase, driftOffset } from './clock.js';
+import { presenceFrom, emptyOverrides, windowOf } from './presence.js';
+import {
+  makeMonumentUniforms, updateMonumentUniforms, MONUMENT_GLSL,
+} from './monument.js';
+import {
+  makeCloudUniforms, updateCloudUniforms, mistOffset,
+} from './clouds.js';
+import {
+  makeHorizonUniforms, updateHorizonUniforms,
+} from './horizon.js';
+import { TraceStore, TraceField, DEFAULT_TRACE_PARAMS } from './traces.js';
+import { Terrain } from './terrain.js';
+import { Sky } from './sky.js';
+import { Cover } from './cover.js';
+import {
+  DEFAULT_REGION, regionHeight, makeRegionUniforms, applyRegionToUniforms,
+} from './region.js';
+import { Player } from './player.js';
+import { createUI, createHUD, createHint, loadSettings, saveSettings } from './ui.js';
+import { GpuTimer } from './gputimer.js';
+import { PixelGovernor } from './governor.js';
+
+// The page catches what goes wrong before this module even loads, and it
+// owns the box that says so and the button that copies the report. This is
+// how the world puts its own refusals in that same box.
+function fail(message) {
+  if (window.dreamNote) window.dreamNote(message);
+  else console.error(message);
+}
+
+function boot() {
+  const canvas = document.getElementById('view');
+
+  // Read before anything else: the renderer cannot change its mind about
+  // multisampling later.
+  let wantMsaa = false;
+  try {
+    const saved = JSON.parse(localStorage.getItem('dreamworld.settings.v1'));
+    wantMsaa = !!(saved && saved.quality && saved.quality.msaa);
+  } catch (err) { wantMsaa = false; }
+
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: wantMsaa });
+  } catch (err) {
+    fail('Tento prohlížeč neumí WebGL 2. Zkus Chrome nebo Edge.');
+    return;
+  }
+  renderer.info.autoReset = false;
+  const gpuTimer = new GpuTimer(renderer);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 6000);
+  const clock = new WorldClock();
+
+  // ------------------------------------------------------------ settings
+  const defaults = {
+    identity: DEFAULT_IDENTITY,
+    epoch: 0,
+    dev: deviationFrom(DEFAULT_IDENTITY, 0, DEFAULT_GROWTH),
+    base: { ...DEFAULT_BASE },
+    trace: { ...DEFAULT_TRACE_PARAMS },
+    presence: emptyOverrides(),
+    region: { ...DEFAULT_REGION },
+    // Not traits of the world: how many pixels the card is asked for, and
+    // whether it also has to multisample them. Hardware antialiasing costs
+    // 16 ms of an empty frame at this size on integrated graphics, and this
+    // world draws its own edges in the shader anyway. With `auto` on, the
+    // governor holds the scale under the frame budget by itself.
+    quality: { scale: 1.0, msaa: 0, auto: 1 },
+  };
+  const settings = loadSettings(defaults);
+
+  // The one dial that always works on a world whose cost is screen area.
+  const governor = new PixelGovernor(settings.quality.scale);
+  let megapixels = 0;
+  // Changing the drawing buffer clears it, and the browser shows the canvas
+  // once per frame, after this code has run. So a resize done at the end of a
+  // frame — right after the render that measured the cost — throws away the
+  // picture that was just drawn and the page behind the canvas shows through
+  // for one frame. That is a blink. Nothing resizes outside the top of a
+  // frame; these two say what is waiting to be done there.
+  let wantScale = 0;      // a pixel scale the governor has asked for
+  let resizeDue = false;  // the canvas itself, or the dial, has moved
+
+  // -------------------------------------------------------------- pieces
+  const worldU = makeWorldUniforms(settings.base);
+  const cloudU = makeCloudUniforms();
+  const monumentU = makeMonumentUniforms();
+  const horizonU = makeHorizonUniforms();
+  const regionU = makeRegionUniforms();
+  const personalU = {
+    uFogColor: { value: new THREE.Vector3() },
+    uZenith: { value: new THREE.Vector3() },
+    uGroundHigh: { value: new THREE.Vector3() },
+    uGroundLow: { value: new THREE.Vector3() },
+    uTraceTint: { value: new THREE.Vector3() },
+    uLightColor: { value: new THREE.Vector3() },
+    uLightDir: { value: new THREE.Vector3(0, 1, 0) },
+    uFogDensity: { value: 1 },
+    uViewDistance: { value: 120 },
+    uGrainScale: { value: 1 },
+    uGrainStrength: { value: 1 },
+    uMistOffset: { value: [0, 0] },
+    uGustOffset: { value: [0, 0] },
+    uWindDir: { value: 0 },
+    uWindSpeed: { value: 1 },
+    uViewDir: { value: new THREE.Vector3(0, 0, -1) },
+    // The made skies' band stack. Empty for a palette that has none, and
+    // then the sky draws its single ramp as before.
+    uBandCount: { value: 0 },
+    uBandAt: { value: new Array(MAX_BANDS).fill(0) },
+    uBandSoft: { value: new Array(MAX_BANDS).fill(1) },
+    uBandCol: { value: Array.from({ length: MAX_BANDS },
+      () => new THREE.Vector3()) },
+    uSkyKind: { value: 0 },
+  };
+
+  // Growth reaches the ground shader as a place, not as a number: the
+  // ceiling is what this person's life allows to wake, and the bloom field
+  // says where it has actually woken.
+  const growthU = {
+    uGrowthCeiling: { value: 0 },
+    uPartyCeiling: { value: 0 },
+    uWinRelief: { value: windowOf('relief') },
+    uWinSky: { value: windowOf('sky') },
+    uOvrSky: { value: -1 },
+    uWinClouds: { value: windowOf('clouds') },
+    uOvrClouds: { value: -1 },
+    uWinCloudShadows: { value: windowOf('cloudShadows') },
+    uOvrCloudShadows: { value: -1 },
+    uPresenceCover: { value: 0 },
+    // How far along a view direction the sky asks about the ground.
+    uSkyProbe: { value: 45 },
+    uSunSize: { value: Math.cos(0.2) },
+  };
+
+  const traces = new TraceStore(settings.trace);
+  const field = new TraceField(renderer, traces);
+  const terrain = new Terrain(
+    [worldU, field.uniforms, personalU, cloudU, growthU, regionU]);
+  const sky = new Sky(
+    [worldU, personalU, cloudU, growthU, monumentU, horizonU,
+      field.uniforms]);
+  const cover = new Cover(
+    [worldU, personalU, growthU, regionU, field.uniforms]);
+  scene.add(terrain.mesh);
+
+  const player = new Player(canvas);
+  const hud = createHUD();
+  const hint = createHint();
+  player.onLockChange = (locked) => hint.show(!locked);
+
+  // Presence is no longer one number for the whole world. This is the
+  // presence where the player is standing, which is what the sky and the
+  // clouds overhead answer to; the ground works it out per pixel.
+  let applyQuality = () => {};
+  let presence = presenceFrom(0, settings.presence);
+  let bloomHere = 0;
+  let breathPhase = 0;
+
+  // What the ground is allowed to know about the people on it: the mix of
+  // everyone present, never one person's own vector. With one player the
+  // mix is that player.
+  let party = partyFrom([{ growth: 0 }]);
+  const RELIEF_WINDOW = windowOf('relief');
+
+  function smoothstep01(a, b, x) {
+    const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  }
+
+  // The ground, as the player feels it. Exactly the terms the vertex shader
+  // uses: shared base shaped by the shared relief, minus the shared traces.
+  function groundHeightAt(x, z) {
+    const now = clock.nowMs();
+    // The wide wake, exactly as the vertex shader reads it. Using the
+    // narrow bloom here would put the collision surface on a different
+    // hill from the drawn one.
+    const relief = smoothstep01(RELIEF_WINDOW[0], RELIEF_WINDOW[1],
+      party.growth * traces.wakeAt(x, z, now));
+    return baseHeight(x, z, breathPhase, settings.base, relief)
+      + regionHeight(x, z, regionU.uLawStrength.value, settings.region)
+      - traces.depthAt(x, z, now);
+  }
+
+  function applySettings() {
+    const d = settings.dev;
+    const p = paletteFrom(d);
+    const set = (u, c) => u.value.set(c[0], c[1], c[2]);
+    set(personalU.uFogColor, p.fog);
+    set(personalU.uZenith, p.zenith);
+    set(personalU.uGroundHigh, p.groundHigh);
+    set(personalU.uGroundLow, p.groundLow);
+    set(personalU.uTraceTint, p.trace);
+    set(personalU.uLightColor, p.light);
+    personalU.uBandCount.value = p.bands.length;
+    personalU.uSkyKind.value = p.skyKind;
+    for (let i = 0; i < MAX_BANDS; i++) {
+      const b = p.bands[i];
+      personalU.uBandAt.value[i] = b ? b.at : 0;
+      // Never zero: the shader smoothsteps across it and a zero-width
+      // join is undefined.
+      personalU.uBandSoft.value[i] = b ? Math.max(0.002, b.soft) : 1;
+      const c = personalU.uBandCol.value[i];
+      if (b) c.set(b.rgb[0], b.rgb[1], b.rgb[2]); else c.set(0, 0, 0);
+    }
+    const l = lightDirection(d);
+    personalU.uLightDir.value.set(l[0], l[1], l[2]).normalize();
+    personalU.uFogDensity.value = d.fogDensity;
+    personalU.uViewDistance.value = d.viewDistance;
+    personalU.uGrainScale.value = d.grainScale;
+    personalU.uGrainStrength.value = d.grainStrength;
+    personalU.uWindDir.value = d.windDir;
+    personalU.uWindSpeed.value = d.windSpeed;
+
+    growthU.uGrowthCeiling.value = d.growth;
+    const forced = (key) => {
+      const v = settings.presence[key];
+      return (v === null || v === undefined) ? -1 : v;
+    };
+    growthU.uOvrSky.value = forced('sky');
+    growthU.uOvrClouds.value = forced('clouds');
+    growthU.uOvrCloudShadows.value = forced('cloudShadows');
+    // Cover exists for the person; whether it exists *here* is the blade's
+    // own business, and it asks the same fields the ground does.
+    growthU.uPresenceCover.value =
+      presenceFrom(d.growth, settings.presence).groundCover;
+    growthU.uSunSize.value = Math.cos(d.sunAngle);
+    growthU.uSkyProbe.value = d.skyProbe;
+    party = partyFrom([{ growth: d.growth }]);
+    growthU.uPartyCeiling.value = party.growth;
+    // The law shapes the shared ground, so it answers to the party mix.
+    applyRegionToUniforms(regionU, settings.region,
+      presenceFrom(party.growth, settings.presence).brokenLaw);
+
+    applyBaseToUniforms(worldU, settings.base);
+    renderer.setClearColor(new THREE.Color(p.fog[0], p.fog[1], p.fog[2]), 1);
+    saveSettings(settings);
+  }
+
+  const ui = createUI({
+    settings,
+    localBloom: () => bloomHere,
+    quality: () => ({
+      auto: !!settings.quality.auto,
+      scale: settings.quality.scale,
+      megapixels,
+      // What the governor is actually defending, so the panel shows the
+      // same thing it is deciding on.
+      fps: governor.pace > 0 ? 1000 / governor.pace : 0,
+      late: governor.late,
+      helpless: governor.helpless,
+      atFloor: governor.atFloor,
+      trusted: gpuTimer.supported,
+    }),
+    onChange: applySettings,
+    onTraceParams: () => traces.reindex(),
+    onQuality: () => {
+      // Handing the dial back: the governor starts again from wherever the
+      // hand left it, with no memory of what used to be too much.
+      if (settings.quality.auto) {
+        settings.quality.scale = governor.resume(settings.quality.scale);
+      }
+      applyQuality();
+      saveSettings(settings);
+    },
+    onClearTraces: () => { traces.clear(); field.draw(clock.nowMs()); },
+    // Clearing the traces now keeps the old walk, so there is something to
+    // put back and this is the control that puts it back.
+    onRestoreTraces: () => {
+      const n = traces.restore();
+      field.draw(clock.nowMs());
+      return n;
+    },
+    traceStatus: () => ({
+      points: traces.points.length,
+      kept: traces.kept(),
+      readOnly: traces.readOnly,
+    }),
+    onReset: () => {
+      settings.identity = DEFAULT_IDENTITY;
+      settings.epoch = 0;
+      Object.assign(settings.dev,
+        deviationFrom(DEFAULT_IDENTITY, 0, DEFAULT_GROWTH));
+      Object.assign(settings.base, DEFAULT_BASE);
+      Object.assign(settings.trace, DEFAULT_TRACE_PARAMS);
+      settings.presence = emptyOverrides();
+      traces.reindex();
+      applySettings();
+    },
+  });
+  applySettings();
+
+  // The canvas keeps its own size from the stylesheet; only the drawing
+  // buffer is set here. The window can also report nothing at all (a hidden
+  // tab, a collapsed pane), and rendering into that leaves a canvas that
+  // never comes back — so the size is watched rather than listened for once.
+  function resize() {
+    const w = Math.max(1, canvas.clientWidth);
+    const h = Math.max(1, canvas.clientHeight);
+    // Capped at one. Beyond that the card draws four pixels for every one
+    // anybody sees, and this world is flat colour — it gains nothing.
+    const dpr = Math.min(window.devicePixelRatio, 1) * settings.quality.scale;
+    if (canvas.width === Math.round(w * dpr)
+      && canvas.height === Math.round(h * dpr)) return;
+    renderer.setPixelRatio(dpr);
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    megapixels = (canvas.width * canvas.height) / 1e6;
+    // Whatever the governor last measured was a different picture.
+    governor.hold();
+  }
+  const askResize = () => { resizeDue = true; };
+  window.addEventListener('resize', askResize);
+  if (window.ResizeObserver) new ResizeObserver(askResize).observe(canvas);
+  resize();
+  applyQuality = askResize;
+
+  // Debug handle. Not used by the world, but it means anything can be
+  // inspected or driven from outside without adding buttons for it.
+  window.dreamworld = {
+    renderer, scene, camera, clock, player, traces, field, terrain, sky, cover,
+    settings, applySettings, governor, gpuTimer,
+    // Changing the pixel count by hand from outside, the same way the panel
+    // does it: ask, and the next frame applies it.
+    askResize: () => { resizeDue = true; },
+    presence: () => presence, bloomHere: () => bloomHere,
+  };
+
+  // What the world can say about itself when somebody has to report that
+  // it is broken. The page builds the rest of the report around this.
+  window.dreamReportExtra = () => {
+    const p = player.position;
+    const kept = traces.kept()
+      .map((k) => k.count).join(', ') || 'žádné';
+    return [
+      'identita: ' + settings.identity + ' / den ' + settings.epoch
+        + ' · paleta ' + settings.dev.paletteIndex,
+      'rozlišení: ' + settings.quality.scale.toFixed(2) + '× · '
+        + megapixels.toFixed(2) + ' Mpx · '
+        + (settings.quality.auto ? 'automatika' : 'ručně')
+        + (settings.quality.msaa ? ' · vyhlazení' : ''),
+      'snímky: ' + (governor.pace > 0
+        ? Math.round(1000 / governor.pace) + ' sn/s'
+        : 'neměřeno')
+        + ' · perioda ' + governor.period.toFixed(1) + ' ms'
+        + (gpuTimer.supported
+          ? ' · karta ' + (governor.cost > 0 ? governor.cost.toFixed(1) : '?')
+            + ' ms'
+          : ' · bez časovače karty')
+        + (governor.late ? ' · opožděné' : '')
+        + (governor.helpless ? ' · zdržuje to něco jiného' : ''),
+      'stopy: ' + traces.points.length + ' bodů · zálohy: ' + kept
+        + (traces.readOnly ? ' · jen pro čtení' : ''),
+      'kde: ' + p.x.toFixed(1) + ', ' + p.z.toFixed(1)
+        + ' · probuzeno ' + bloomHere.toFixed(2),
+    ];
+  };
+
+  const persist = () => {
+    traces.save(true);
+    if (qualityDirty) { saveSettings(settings); qualityDirty = false; }
+  };
+  window.addEventListener('beforeunload', persist);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') persist();
+  });
+
+  // ---------------------------------------------------------------- loop
+  let last = performance.now();
+  let qualityDirty = false;
+  let qualitySaved = last;
+  let panelDue = 0;
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    // Everything that changes the pixel count happens here, before this
+    // frame is drawn, so the buffer it clears is filled again before anybody
+    // sees it.
+    if (wantScale) {
+      settings.quality.scale = wantScale;
+      wantScale = 0;
+      resizeDue = true;
+    }
+    if (resizeDue) { resizeDue = false; resize(); }
+    // The clamped step drives the world; the real one is what the governor
+    // judges the frame by.
+    const frameMs = now - last;
+    const dt = Math.min(0.1, frameMs * 0.001);
+    last = now;
+    const workStart = performance.now();
+
+    // One clock. Everything animated reads it, and it reaches the GPU only
+    // as phases that have already been wrapped.
+    const seconds = clock.seconds();
+    const wallNow = clock.nowMs();
+    breathPhase = scrollPhase(seconds, settings.base.breathRate, BREATH_PERIOD);
+    worldU.uBreathPhase.value = breathPhase;
+
+    const mist = mistOffset(seconds, settings.dev);
+    personalU.uMistOffset.value[0] = mist[0];
+    personalU.uMistOffset.value[1] = mist[1];
+
+    // The same wind, one scale finer, for anything with a stalk.
+    const gust = driftOffset(seconds, settings.dev.windDir,
+      settings.dev.windSpeed * 1.4, 0.006, GUST_PERIOD);
+    personalU.uGustOffset.value[0] = gust[0];
+    personalU.uGustOffset.value[1] = gust[1];
+
+    player.update(dt, camera, groundHeightAt);
+
+    if (player.speed > 0.3) {
+      if (traces.deposit(player.position.x, player.position.z, wallNow)) {
+        traces.save(false);
+      }
+    }
+
+    // What is overhead belongs to the ground underfoot: the sky opens over
+    // woken land and closes again over the Nothing.
+    bloomHere = traces.bloomAt(player.position.x, player.position.z, wallNow);
+    presence = presenceFrom(settings.dev.growth * bloomHere, settings.presence);
+    updateCloudUniforms(cloudU, settings.dev, presence, seconds);
+
+    // The monument answers to the party ceiling alone. It stands far past
+    // anything anyone has walked, so gating it on the bloom would mean
+    // never seeing it.
+    const farPresence = presenceFrom(party.growth, settings.presence);
+    updateMonumentUniforms(monumentU, camera.position.x, camera.position.z,
+      farPresence.monument);
+    // The skyline stands on the far world too, and for the same reason is
+    // not gated by anybody's walked line.
+    updateHorizonUniforms(horizonU, camera.position.x, camera.position.z,
+      farPresence.horizon);
+
+    field.update(player.position.x, player.position.z, wallNow);
+    terrain.update(camera.position.x, camera.position.z,
+      personalU.uViewDistance.value);
+    sky.update(scene, camera,
+      traces.points.length > 0 ? settings.dev.growth : 0);
+    camera.getWorldDirection(personalU.uViewDir.value);
+    cover.update(scene, camera, growthU.uPresenceCover.value);
+
+    renderer.info.reset();
+    gpuTimer.begin();
+    renderer.render(scene, camera);
+    gpuTimer.end();
+
+    const gpuMs = gpuTimer.poll();
+    hud.frame(dt, performance.now() - workStart, gpuMs, gpuTimer.supported);
+    hud.set(renderer.info.render.triangles, renderer.info.render.calls,
+      traces.points.length, player.position.x, player.position.z,
+      settings.dev.growth * bloomHere,
+      megapixels, settings.quality.scale, settings.quality.auto);
+
+    // Last thing in the frame: judge the frame that was just drawn, and if
+    // the pixel count has to move, move it before the next one starts.
+    if (settings.quality.auto) {
+      const want = governor.update(frameMs,
+        gpuTimer.supported ? gpuMs : frameMs, gpuTimer.supported);
+      if (want !== settings.quality.scale) {
+        wantScale = want;
+        qualityDirty = true;
+      }
+    }
+    // The governor can change its mind every half second; the disk does not
+    // need to hear about each one.
+    if (qualityDirty && now - qualitySaved > 4000) {
+      saveSettings(settings);
+      qualityDirty = false;
+      qualitySaved = now;
+    }
+    // The panel's own reading of a dial that nobody is touching.
+    panelDue -= dt;
+    if (panelDue <= 0) { panelDue = 0.25; ui.refreshLive(); }
+  }
+
+  requestAnimationFrame(frame);
+}
+
+boot();
