@@ -175,6 +175,15 @@ function formatValue(v, step) {
   return v.toFixed(dec);
 }
 
+// Czech counts one thing, a few things and many things differently, and a
+// panel that says "3 bodu" reads as something a machine printed rather
+// than as something somebody wrote.
+function points(n) {
+  if (n === 1) return '1 bod';
+  if (n >= 2 && n <= 4) return n + ' body';
+  return n + ' bodů';
+}
+
 // How long ago, in words, because a timestamp tells nobody anything.
 function ago(at) {
   const s = Math.max(0, (Date.now() - at) * 0.001);
@@ -383,7 +392,7 @@ export function createUI(opts) {
   walkClear.title = 'Vezme zpátky jen jeho body. Tvoje zůstanou.';
   walkClear.addEventListener('click', () => {
     const n = onClearWalker();
-    walkClear.textContent = n > 0 ? 'smazáno: ' + n + ' bodů' : 'nic tu nemá';
+    walkClear.textContent = n > 0 ? 'smazáno: ' + points(n) : 'nic tu nemá';
     refreshTraces();
   });
   const walkClearRow = el('div', 'row buttons');
@@ -407,11 +416,11 @@ export function createUI(opts) {
     if (!w) { walkNote.textContent = ''; return; }
     if (!w.on) {
       walkNote.textContent = 'chodec je vypnutý'
-        + (w.points ? ' · po jeho stopě zbylo ' + w.points + ' bodů' : '');
+        + (w.points ? ' · po jeho stopě zbylo ' + points(w.points) : '');
       return;
     }
     walkNote.textContent = w.identity + ' je ' + Math.round(w.distance)
-      + ' m ' + whichWay(w.turn) + ' · za sebou má ' + w.points + ' bodů';
+      + ' m ' + whichWay(w.turn) + ' · za sebou má ' + points(w.points);
   }
   live.push(refreshWalker);
 
@@ -493,7 +502,7 @@ export function createUI(opts) {
   const keptBtn = el('button', 'btn', 'vrátit zálohu');
   keptBtn.addEventListener('click', () => {
     const n = onRestoreTraces();
-    keptBtn.textContent = n > 0 ? 'vráceno: ' + n + ' bodů' : 'není co vrátit';
+    keptBtn.textContent = n > 0 ? 'vráceno: ' + points(n) : 'není co vrátit';
     refreshTraces();
   });
   const keptRow = el('div', 'row buttons');
@@ -503,11 +512,11 @@ export function createUI(opts) {
   function refreshTraces() {
     const t = traceStatus();
     if (!t) { keptNote.textContent = ''; keptBtn.disabled = true; return; }
-    let text = 'stopy: ' + t.points + ' bodů';
+    let text = 'stopy: ' + points(t.points);
     if (t.readOnly) text += ' · tahle stránka neukládá (?nosave)';
     if (t.kept.length) {
       const k = t.kept[0];
-      text += ' · záloha: ' + k.count + ' bodů'
+      text += ' · záloha: ' + points(k.count)
         + (k.at ? ' (' + ago(k.at) + ')' : '');
       if (t.kept.length > 1) text += ' · a další ' + (t.kept.length - 1);
     } else {

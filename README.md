@@ -5,7 +5,7 @@ projekt, jeho dokumenty a historie tu nejsou.
 
 **Otevřít:** https://msgreenblume.github.io/dreamworld-preview/
 
-## Co je nového — build 04fe30b
+## Co je nového — build 19b80df
 
 **Opraveno: propadání na začátku.** Díky za hlášení — bylo přesně tak,
 jak jsi to popsal, a dalo se podle toho najít. Krajina se probouzela
