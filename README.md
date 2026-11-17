@@ -5,37 +5,40 @@ projekt, jeho dokumenty a historie tu nejsou.
 
 **Otevřít:** https://msgreenblume.github.io/dreamworld-preview/
 
-## Co je nového — build 20e4d91
+## Co je nového — build 04fe30b
+
+**Opraveno: propadání na začátku.** Díky za hlášení — bylo přesně tak,
+jak jsi to popsal, a dalo se podle toho najít. Krajina se probouzela
+příliš rychle: osmnáct metrů kopců vstalo za šest vteřin, zem se hnula
+pod nohama a obraz se za tím opožďoval, takže se oko dostalo pod povrch,
+na kterém jsi stál. Teď se krajina probouzí devadesát vteřin místo
+dvaceti a obraz se překresluje podle toho, o kolik se zem opravdu pohnula,
+ne podle hodin. Nejhorší nesoulad spadl z dvanácti metrů na 28 centimetrů.
 
 **Obloha se naklání k tomu, kdo je poblíž.** Ve směru, kde je druhý
 chodec, si obloha bere trochu jeho světla — nízko nad obzorem, široce,
-takže se to dá najít otáčením, ne mířením. Když jsi sám, obloha je celá
-tvoje, beze změny.
-
-Je to schválně tiché. Zesílit se to dá ve skupině **Obloha jako kompas**
-posuvníkem *síla*; *dosah* říká, jak daleko může někdo být a ještě oblohu
-obarvit.
+takže se to dá najít otáčením. Když jsi sám, obloha je celá tvoje.
 
 **Po světě chodí ještě někdo** — poutník. Chodí po uzavřené dráze kolem
-počátku, takže se vrací, a nechává za sebou stopu pod svým jménem. Není
-to nikdo na druhém konci drátu, jeho cesta je prostě funkce času.
-
-Ve skupině **Druhý chodec** je řádek, který říká, kde je: „poutník je
-83 m před tebou vlevo". **smazat jeho stopy** vezme zpátky jen jeho body.
+počátku, takže se vrací, a nechává za sebou stopu pod svým jménem.
 
 Co stojí za vyzkoušení:
 
 1. **Najdi ho podle oblohy** — otáčej se a sleduj, kde se nebe nízko nad
-   obzorem otepluje. Panel ti to potvrdí.
+   obzorem otepluje. Skupina **Obloha jako kompas** to potvrdí, a
+   **Druhý chodec** řekne, kolik metrů a kterým směrem.
 2. **Vejdi do jeho stopy.** Vzduch se změní na jeho — barva země a
-   oblohy, světlo, dohlednost. Skupina **Vzduch místa** ukazuje, čí
-   vzduch zrovna dýcháš.
+   oblohy, světlo, dohlednost. **Vzduch místa** ukazuje, čí vzduch
+   zrovna dýcháš.
 3. **Projdi tam, kde se vaše čáry kříží.** Drží tam papír víc, než tam
    kdo z vás položil: barva sahá dál, nikdy tam úplně neuschne a roste
    tam víc porostu. Je to jediná věc tady, která se nedá mít o samotě.
-   Zesílit v **Rozpití** → *křížení — růst*, *křížení — vlhkost*.
 
 Zem pod nohama se nemění nikdy, ta je společná pro všechny.
+
+Kdyby se něco propadalo, trhalo nebo zlobilo znova — pošli hlášení
+stejně jako minule. Nese v sobě číslo verze, takže je z něj poznat, co
+přesně jsi měl před sebou.
 
 - chůze **WASD**, běh **Shift**, rozhlížení **myší** (klikni do obrazu)
 - **H** ukáže a skryje panel

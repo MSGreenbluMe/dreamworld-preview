@@ -18,13 +18,17 @@ const SETTINGS_KEY = 'dreamworld.settings.v1';
 // default retuned here would never reach him. So each step that retunes a
 // default raises this number and lists the keys it retuned; those are taken
 // fresh once, and everything else he has set is left alone.
-const SETTINGS_VERSION = 2;
+const SETTINGS_VERSION = 3;
 const RETUNED = {
   // The wash, retuned once it could be seen at all against the wide wake.
   2: {
     trace: ['wetDry', 'washOn', 'washEdge', 'washRag', 'washRagScale',
       'washRim', 'washFresh', 'washWake'],
   },
+  // The landscape woke in six seconds and the ground moved out from under
+  // whoever was standing on it. Anybody who has this number saved has the
+  // broken one.
+  3: { trace: ['wakeRise'] },
 };
 
 function takeFresh(saved, from) {
@@ -147,7 +151,7 @@ const TRACE_FIELDS = [
   ['bloomRadius', 'šířka rozkvětu (m)', 2, 60, 0.5],
   ['bloomRise', 'doba probuzení (s)', 0, 60, 0.5],
   ['wakeRadius', 'šířka krajiny (m)', 40, 800, 10],
-  ['wakeRise', 'probuzení krajiny (s)', 1, 120, 1],
+  ['wakeRise', 'probuzení krajiny (s)', 5, 400, 5],
 ];
 
 // The walked line as a wash of paint rather than a smear.

@@ -91,7 +91,17 @@ export class Player {
     const ground = groundHeightAt(this.position.x, this.position.z);
     this.position.y = ground;
     if (this.smoothGround === null) this.smoothGround = ground;
-    this.smoothGround += (ground - this.smoothGround) * Math.min(1, 14 * dt);
+    // Ground that rises is followed at once; ground that falls away is
+    // eased into.
+    //
+    // Smoothing a rise is the one direction that can put the eye under the
+    // surface it is standing on, and from under it the world is inside
+    // out. Easing a fall cannot: the worst it can do is leave the player a
+    // moment above the ground, which reads as a step rather than as the
+    // world breaking. When the two are not the same thing, be wrong
+    // upwards.
+    if (ground > this.smoothGround) this.smoothGround = ground;
+    else this.smoothGround += (ground - this.smoothGround) * Math.min(1, 14 * dt);
 
     this.speed = Math.hypot(this.velocity.x, this.velocity.z);
     this.bobPhase += this.speed * dt * 1.9;

@@ -105,7 +105,16 @@ export const DEFAULT_TRACE_PARAMS = {
   // path's own groove along its crest — a landscape has to wake around the
   // walker, not under their feet.
   wakeRadius: 260.0,  // metres of landscape woken by being walked near
-  wakeRise: 20.0,     // seconds; a hill rises slower than a footprint
+  // Seconds for the landscape to wake. A hill rises slower than a
+  // footprint, and at twenty seconds it did not: the relief window is a
+  // narrow band of this number, so the whole eighteen metres of it came up
+  // in about six seconds — three metres a second of ground moving under a
+  // player standing still. No cache can follow that, and nothing should
+  // have to: a landscape that arrives in six seconds is an earthquake, not
+  // a world waking. The first person ever to walk into an empty world
+  // reported falling through the ground at the start, several times, and
+  // then it stopping. This is what it was.
+  wakeRise: 90.0,
 
   // The wash. A walked line is not a smear with soft edges; it is paint
   // on wet paper. These say how it behaves.
@@ -612,6 +621,17 @@ const WAKE_CONFIG = {
   radius: (params) => params.wakeRadius,
   weight: (params) => (p, age) =>
     p.s * Math.min(1, age / Math.max(0.001, params.wakeRise)),
+  // How far out of date this texture has become where the player is
+  // standing.
+  //
+  // This one field is not only looked at: it decides the shape of the
+  // ground, and the body is put on that shape by an exact calculation
+  // while the picture reads it from here. Everything else these textures
+  // hold is colour, and colour can be a moment behind without anybody
+  // being able to tell. This cannot: a tenth of a metre of disagreement is
+  // a tenth of a metre of the player standing inside the hill they are on.
+  drift: (store, x, z, then, now) =>
+    Math.abs(store.wakeAt(x, z, now) - store.wakeAt(x, z, then)),
 };
 
 // Reused: what the renderer was clearing to before a field took it over.
@@ -720,6 +740,13 @@ class PointField {
       this.center.set(playerX, playerZ);
       this.draw(now);
     } else if (this.drawnRevision !== this.store.revision && stale > 100) {
+      this.draw(now);
+    } else if (this.config.drift && stale > 16
+      && this.config.drift(this.store, playerX, playerZ, this.lastDraw, now)
+        > 0.001) {
+      // Not a clock but a measurement: redrawn as often as it is actually
+      // moving, which is often for the first minute of a new world and
+      // almost never afterwards.
       this.draw(now);
     } else if (stale > 2000) {
       this.draw(now);   // ages move on, so the cache has to be refreshed
