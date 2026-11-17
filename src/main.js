@@ -11,7 +11,7 @@ import {
 } from './world.js';
 import {
   DEFAULT_IDENTITY, DEFAULT_GROWTH, deviationFrom, paletteFrom,
-  lightDirection, partyFrom, MAX_BANDS,
+  lightDirection, partyFrom, mixAir, MAX_BANDS,
 } from './deviation.js';
 import { WorldClock, scrollPhase, driftOffset } from './clock.js';
 import { presenceFrom, emptyOverrides, windowOf } from './presence.js';
@@ -78,6 +78,11 @@ function boot() {
     trace: { ...DEFAULT_TRACE_PARAMS },
     presence: emptyOverrides(),
     region: { ...DEFAULT_REGION },
+    // How reluctantly two people's air mixes where both have walked. At
+    // one it is a plain average; higher, and a place belongs more firmly to
+    // whoever woke it most, with the mixed air narrowed to the seam between
+    // them.
+    air: { mix: 1.8 },
     // Not traits of the world: how many pixels the card is asked for, and
     // whether it also has to multisample them. Hardware antialiasing costs
     // 16 ms of an empty frame at this size on integrated graphics, and this
@@ -151,7 +156,7 @@ function boot() {
     uSunSize: { value: Math.cos(0.2) },
   };
 
-  const traces = new TraceStore(settings.trace);
+  const traces = new TraceStore(settings.trace, settings.identity);
   const field = new TraceField(renderer, traces);
   const terrain = new Terrain(
     [worldU, field.uniforms, personalU, cloudU, growthU, regionU]);
@@ -174,6 +179,10 @@ function boot() {
   let presence = presenceFrom(0, settings.presence);
   let bloomHere = 0;
   let breathPhase = 0;
+  // The air where the player stands, and the authors it was mixed from.
+  // Reused rather than rebuilt, because this is worked out every frame.
+  const airEntries = [];
+  let air = null;
 
   // What the ground is allowed to know about the people on it: the mix of
   // everyone present, never one person's own vector. With one player the
@@ -200,9 +209,36 @@ function boot() {
       - traces.depthAt(x, z, now);
   }
 
-  function applySettings() {
-    const d = settings.dev;
-    const p = paletteFrom(d);
+  // Everyone's vector, worked out once and kept. Hashing a name is cheap,
+  // but the air is mixed every frame and the palette behind it is a dozen
+  // colour conversions.
+  //
+  // The day belongs to the world and not to a person, so everybody is read
+  // at the day the panel is set to. The person looking is the exception:
+  // their vector is the one on the panel, hand-tuned fog and all, or moving
+  // a slider would be undone the moment they walked on their own line.
+  const vectors = new Map();
+  let selfVector = { dev: settings.dev, palette: null };
+  function vectorOf(identity) {
+    if (identity === settings.identity) return selfVector;
+    let v = vectors.get(identity);
+    if (!v) {
+      const dev = deviationFrom(identity, settings.epoch, settings.dev.growth);
+      v = { dev, palette: paletteFrom(dev) };
+      vectors.set(identity, v);
+    }
+    return v;
+  }
+
+  // Reused: setClearColor is called once a frame and does not need a new
+  // colour object each time.
+  const clearColor = new THREE.Color();
+
+  // The air, as it is where the player is standing — colour, light, fog,
+  // grain, the cloud's shape and the size of the sun. The place decides
+  // this, not the panel, so it runs every frame and is allowed to touch
+  // nothing but uniforms: it writes no settings and saves nothing.
+  function applyAir(d, p) {
     const set = (u, c) => u.value.set(c[0], c[1], c[2]);
     set(personalU.uFogColor, p.fog);
     set(personalU.uZenith, p.zenith);
@@ -227,6 +263,25 @@ function boot() {
     personalU.uViewDistance.value = d.viewDistance;
     personalU.uGrainScale.value = d.grainScale;
     personalU.uGrainStrength.value = d.grainStrength;
+    growthU.uSunSize.value = Math.cos(d.sunAngle);
+    renderer.setClearColor(
+      clearColor.setRGB(p.fog[0], p.fog[1], p.fog[2]), 1);
+  }
+
+  // Everything the panel owns: what the person looking has earned, what
+  // they have pinned by hand, and the shared ground. Called when something
+  // was touched, never per frame.
+  function applySettings() {
+    const d = settings.dev;
+    // A vector that was hashed from a name is only right for the day and
+    // the growth it was hashed at, and both are on the panel.
+    vectors.clear();
+    selfVector = { dev: d, palette: paletteFrom(d) };
+    applyAir(d, selfVector.palette);
+
+    // The wind is the one part of the air that cannot vary by place: it is
+    // integrated against the world's own clock, and the reason is written
+    // down beside the mix in deviation.js.
     personalU.uWindDir.value = d.windDir;
     personalU.uWindSpeed.value = d.windSpeed;
 
@@ -242,7 +297,6 @@ function boot() {
     // own business, and it asks the same fields the ground does.
     growthU.uPresenceCover.value =
       presenceFrom(d.growth, settings.presence).groundCover;
-    growthU.uSunSize.value = Math.cos(d.sunAngle);
     growthU.uSkyProbe.value = d.skyProbe;
     party = partyFrom([{ growth: d.growth }]);
     growthU.uPartyCeiling.value = party.growth;
@@ -251,7 +305,10 @@ function boot() {
       presenceFrom(party.growth, settings.presence).brokenLaw);
 
     applyBaseToUniforms(worldU, settings.base);
-    renderer.setClearColor(new THREE.Color(p.fog[0], p.fog[1], p.fog[2]), 1);
+    // Who is walking from now on. Points already laid keep the name they
+    // were laid under, which is how changing the identity makes this place
+    // have two authors instead of rewriting its one.
+    traces.author = settings.identity;
     saveSettings(settings);
   }
 
@@ -294,6 +351,39 @@ function boot() {
       kept: traces.kept(),
       readOnly: traces.readOnly,
     }),
+    // Who the air here belongs to, for the panel to say out loud.
+    airStatus: () => (air ? air.parts : []),
+    // Somebody else's line, laid across the way ahead.
+    //
+    // This is not the second walker — that is its own step, with a vector
+    // and a will of its own. It is the control that makes the step before
+    // it visible: without it, seeing another person's air takes two
+    // machines, two people and a quarter of an hour of walking. What it
+    // writes is an ordinary walk under another name, indistinguishable
+    // from one somebody made, and 'smazat stopy' takes it away again.
+    onVisitor: (name) => {
+      const who = (name || '').trim() || 'poutník';
+      const now = clock.nowMs();
+      const dir = new THREE.Vector3();
+      camera.getWorldDirection(dir);
+      const len = Math.hypot(dir.x, dir.z) || 1;
+      const fx = dir.x / len, fz = dir.z / len;   // the way the player faces
+      const ax = -fz, az = fx;                    // and across it
+      const cx = player.position.x + fx * 14;
+      const cz = player.position.z + fz * 14;
+      const a = traces.authorIndex(who);
+      // Laid a few seconds ago, so the place is already awake when it
+      // appears: a line that woke while being looked at would arrive as a
+      // brightening rather than as somewhere somebody has been.
+      const t0 = now - 5000;
+      const half = 20, step = Math.max(0.2, traces.params.spacing);
+      for (let t = -half; t <= half; t += step) {
+        traces.add(cx + ax * t, cz + az * t, t0, 1.0, a);
+      }
+      traces.save(true);
+      field.draw(now);
+      return who;
+    },
     onReset: () => {
       settings.identity = DEFAULT_IDENTITY;
       settings.epoch = 0;
@@ -343,6 +433,9 @@ function boot() {
     // does it: ask, and the next frame applies it.
     askResize: () => { resizeDue = true; },
     presence: () => presence, bloomHere: () => bloomHere,
+    air: () => air,
+    authorsHere: () => traces.authorsAt(
+      player.position.x, player.position.z, clock.nowMs()),
   };
 
   // What the world can say about itself when somebody has to report that
@@ -370,6 +463,11 @@ function boot() {
         + (governor.helpless ? ' · zdržuje to něco jiného' : ''),
       'stopy: ' + traces.points.length + ' bodů · zálohy: ' + kept
         + (traces.readOnly ? ' · jen pro čtení' : ''),
+      'vzduch zde: ' + (air && air.parts.length
+        ? air.parts.map((q) => q.identity + ' '
+          + Math.round(q.weight * 100) + ' %').join(' · ')
+        : 'nikdo tu nebyl')
+        + ' · míchání ' + settings.air.mix.toFixed(2),
       'kde: ' + p.x.toFixed(1) + ', ' + p.z.toFixed(1)
         + ' · probuzeno ' + bloomHere.toFixed(2),
     ];
@@ -437,7 +535,28 @@ function boot() {
     // woken land and closes again over the Nothing.
     bloomHere = traces.bloomAt(player.position.x, player.position.z, wallNow);
     presence = presenceFrom(settings.dev.growth * bloomHere, settings.presence);
-    updateCloudUniforms(cloudU, settings.dev, presence, seconds);
+
+    // Whose air this is. The place answers with everyone who ever walked
+    // it, each weighted by how much of its waking is theirs. Where nobody
+    // has walked there is nobody to ask, and the air is the person standing
+    // here — which is also what the ground answers to, and with one player
+    // the two are the same thing.
+    airEntries.length = 0;
+    const authors = traces.authorsAt(
+      player.position.x, player.position.z, wallNow);
+    for (const one of authors) {
+      const v = vectorOf(one.author);
+      airEntries.push({ dev: v.dev, palette: v.palette, weight: one.weight });
+    }
+    if (airEntries.length === 0) {
+      airEntries.push({
+        dev: selfVector.dev, palette: selfVector.palette, weight: 1,
+      });
+    }
+    air = mixAir(airEntries, settings.dev, settings.air.mix);
+    applyAir(air.dev, air.palette);
+
+    updateCloudUniforms(cloudU, air.dev, presence, seconds);
 
     // The monument answers to the party ceiling alone. It stands far past
     // anything anyone has walked, so gating it on the bloom would mean

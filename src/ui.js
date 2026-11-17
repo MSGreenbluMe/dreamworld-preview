@@ -59,6 +59,7 @@ export function loadSettings(defaults) {
       base: { ...defaults.base, ...(saved.base || {}) },
       trace: { ...defaults.trace, ...(saved.trace || {}) },
       region: { ...defaults.region, ...(saved.region || {}) },
+      air: { ...defaults.air, ...(saved.air || {}) },
       presence: { ...defaults.presence, ...(saved.presence || {}) },
       quality: { ...defaults.quality, ...(saved.quality || {}) },
     };
@@ -177,6 +178,7 @@ export function createUI(opts) {
     settings, onChange, onTraceParams, onClearTraces, onReset, onQuality,
     localBloom = () => 1, quality = () => null,
     onRestoreTraces = () => 0, traceStatus = () => null,
+    airStatus = () => [], onVisitor = () => '',
   } = opts;
 
   const root = el('div', 'panel');
@@ -299,6 +301,47 @@ export function createUI(opts) {
   addFields(gid, AIR_FIELDS, settings.dev, showPaletteName);
   gid.appendChild(paletteLabel);
   refreshers.push(showPaletteName);
+
+  // ------------------------------------------------------------------- air
+  const gair = addGroup('Vzduch místa',
+    'stopa si pamatuje, kdo ji udělal — vzduch místa je směs jeho autorů '
+    + 'podle toho, kolik z něj kdo probudil; kde nešel nikdo, je tvůj');
+
+  addSlider(gair, 'míchání', 1, 4, 0.05,
+    () => settings.air.mix, (v) => { settings.air.mix = v; });
+
+  const airNote = el('div', 'group-note', '');
+  gair.appendChild(airNote);
+
+  // There is no second walker yet, and the air of somebody else is
+  // invisible without one. This lays a stretch of trace across the way
+  // ahead under another name, so there is something to walk into.
+  const visitRow = el('div', 'row buttons');
+  const visitName = el('input', 'text');
+  visitName.type = 'text';
+  visitName.value = 'poutník';
+  visitName.placeholder = 'jméno';
+  visitName.spellcheck = false;
+  const visitBtn = el('button', 'btn', 'prošel tu');
+  visitBtn.title = 'Položí přes cestu před tebou stopu pod cizím jménem, '
+    + 'aby bylo do čeho vejít. Smazat stopy to vezme zpátky.';
+  visitBtn.addEventListener('click', () => {
+    const who = onVisitor(visitName.value);
+    visitBtn.textContent = who + ' tu prošel';
+    refreshTraces();
+  });
+  visitRow.appendChild(visitName);
+  visitRow.appendChild(visitBtn);
+  gair.appendChild(visitRow);
+
+  function refreshAir() {
+    const parts = airStatus();
+    airNote.textContent = 'vzduch zde: ' + (parts.length
+      ? parts.map((q) => q.identity + ' ' + Math.round(q.weight * 100) + ' %')
+        .join(' · ')
+      : 'nikdo tu nebyl');
+  }
+  live.push(refreshAir);
 
   // ---------------------------------------------------------------- clouds
   const gcloud = addGroup('Mraky', 'jedno pole — nahoře i jako stín na zemi');

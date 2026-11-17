@@ -1,7 +1,7 @@
 // traces.js — the walked line, and what it wakes.
 //
-// A trace is a point with an age and a strength. Nothing else is stored:
-// no geometry, no heightmap, no terrain. Two fields are derived from the
+// A trace is a point with an age, a strength and an author. Nothing else is
+// stored: no geometry, no heightmap, no terrain. Two fields are derived from the
 // same points, both pure functions of the point set and the clock:
 //
 //   depth  — a narrow depression in the shared ground, for the path itself
@@ -63,6 +63,17 @@ function storedAt(raw) {
   return head ? parseInt(head[1], 10) : 0;
 }
 
+// How much one point has woken its surroundings: its strength, how long it
+// has had to wake anything, and how far away the question is being asked.
+//
+// Written down once because two things read it. `bloomAt` takes the
+// greatest of these over every point, and `authorsAt` takes the greatest
+// per author — and if those two ever disagreed, the air of a place would
+// belong to somebody the ground had never heard of.
+function bloomWeight(p, age, rise) {
+  return p.s * Math.min(1, age / rise);
+}
+
 // A way to walk the world without writing to it, for measuring and for
 // testing in somebody else's browser. ?nosave on the address still loads
 // what is there; it simply never saves over it.
@@ -116,9 +127,15 @@ export const DEFAULT_TRACE_PARAMS = {
 // ------------------------------------------------------------------ store
 
 export class TraceStore {
-  constructor(params) {
+  // `author` is whoever is walking now. It is a name and nothing else: a
+  // trace records who was there, never what their world looked like, so a
+  // person's air can change without rewriting the ground they crossed.
+  constructor(params, author) {
     this.params = params || { ...DEFAULT_TRACE_PARAMS };
-    this.points = [];        // { x, z, t0, s }
+    this.author = author || 'dreamer';
+    this.authors = [];       // every name that has walked here
+    this._peaks = [];        // scratch for authorsAt, one slot per author
+    this.points = [];        // { x, z, t0, s, a }
     this.fine = new Map();   // spatial hash at trace width
     this.coarse = new Map(); // spatial hash at bloom width
     this.broad = new Map();  // spatial hash at landscape width
@@ -136,6 +153,16 @@ export class TraceStore {
   }
 
   _key(cx, cz) { return cx * 73856093 ^ cz * 19349663; }
+
+  // A point stores its author as a slot in this list, not as a string: six
+  // thousand copies of a name is a hundred kilobytes of nothing, and the
+  // saved walk would carry all of it.
+  authorIndex(name) {
+    const i = this.authors.indexOf(name);
+    if (i >= 0) return i;
+    this.authors.push(name);
+    return this.authors.length - 1;
+  }
 
   _put(map, cell, p) {
     const k = this._key(Math.floor(p.x / cell), Math.floor(p.z / cell));
@@ -158,8 +185,8 @@ export class TraceStore {
     this._put(this.broad, this.params.wakeRadius * 2, p);
   }
 
-  add(x, z, t0, s) {
-    const p = { x, z, t0, s };
+  add(x, z, t0, s, a) {
+    const p = { x, z, t0, s, a: a || 0 };
     this.points.push(p);
     if (this.points.length > MAX_POINTS) {
       this.points.splice(0, Math.floor(MAX_POINTS * 0.1));
@@ -180,7 +207,8 @@ export class TraceStore {
       const dx = x - last.x, dz = z - last.z;
       if (dx * dx + dz * dz < sp * sp) return false;
     }
-    this.lastDeposit = this.add(x, z, now, 1.0);
+    this.lastDeposit =
+      this.add(x, z, now, 1.0, this.authorIndex(this.author));
     return true;
   }
 
@@ -222,10 +250,59 @@ export class TraceStore {
   // instant it lands, and what has woken never goes back to sleep.
   bloomAt(x, z, now) {
     const { bloomRadius, bloomRise } = this.params;
-    return this._peak(this.coarse, bloomRadius * 2, bloomRadius, x, z, (p) => {
-      const age = Math.max(0, (now - p.t0) * 0.001);
-      return p.s * Math.min(1, age / Math.max(0.001, bloomRise));
-    });
+    const rise = Math.max(0.001, bloomRise);
+    return this._peak(this.coarse, bloomRadius * 2, bloomRadius, x, z, (p) =>
+      bloomWeight(p, Math.max(0, (now - p.t0) * 0.001), rise));
+  }
+
+  // Everyone who woke this place, and how much of it is theirs.
+  //
+  // Each author's own peak, taken the same way `bloomAt` takes the peak of
+  // all of them — so the strongest author here reads exactly the number
+  // `bloomAt` returns, and a place with one author is untouched by any of
+  // this. Peaks and not sums: a sum would hand a place to whoever walked it
+  // most often rather than to whoever woke it most, and ten passes along
+  // one line would drown a single pass beside it.
+  //
+  // Nothing here depends on the order the points come back in, so two
+  // machines with the same walk get the same answer.
+  authorsAt(x, z, now) {
+    const { bloomRadius, bloomRise } = this.params;
+    const cell = bloomRadius * 2;
+    const r2 = bloomRadius * bloomRadius;
+    const rise = Math.max(0.001, bloomRise);
+    const n = this.authors.length;
+    const peak = this._peaks;
+    peak.length = n;
+    for (let i = 0; i < n; i++) peak[i] = 0;
+
+    const cx = Math.floor(x / cell), cz = Math.floor(z / cell);
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        const bucket = this.coarse.get(this._key(cx + i, cz + j));
+        if (!bucket) continue;
+        for (const p of bucket) {
+          const dx = x - p.x, dz = z - p.z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 >= r2) continue;
+          const f = 1.0 - d2 / r2;
+          const a = p.a < n ? p.a : 0;
+          const v = bloomWeight(p, Math.max(0, (now - p.t0) * 0.001), rise)
+            * f * f;
+          if (v > peak[a]) peak[a] = v;
+        }
+      }
+    }
+
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      // A share this small is a point at the very rim of its reach. Kept,
+      // it would put a name on the panel for a place nobody has been near.
+      if (peak[i] > 0.0005) {
+        out.push({ author: this.authors[i], weight: peak[i] });
+      }
+    }
+    return out;
   }
 
   // How wet this place still is, 0 to 1: 1 the moment it was walked,
@@ -250,6 +327,7 @@ export class TraceStore {
 
   clear() {
     this.points.length = 0;
+    this.authors.length = 0;
     this.fine.clear();
     this.coarse.clear();
     this.broad.clear();
@@ -258,14 +336,39 @@ export class TraceStore {
     this.save(true);
   }
 
+  // Takes a stored walk as this store's own. Loading and handing back a
+  // kept copy both come through here, so there is one place that knows how
+  // a saved walk is read.
+  //
+  // A walk saved before traces had authors carries no list of names. It is
+  // given the name of whoever is walking now, which is true of every walk
+  // that exists: until this step there was one walker and no way to be
+  // anybody else.
+  _adopt(data) {
+    if (!data || !Array.isArray(data.p)) return false;
+    if (data.v !== 1 && data.v !== 2) return false;
+    this.points.length = 0;
+    this.fine.clear();
+    this.coarse.clear();
+    this.broad.clear();
+    this.lastDeposit = null;
+    this.authors = (Array.isArray(data.who) && data.who.length)
+      ? data.who.slice()
+      : [this.author];
+    const last = this.authors.length - 1;
+    for (const rec of data.p) {
+      const a = rec.length > 4 ? Math.min(last, Math.max(0, rec[4] | 0)) : 0;
+      this.add(rec[0], rec[1], rec[2], rec[3], a);
+    }
+    this.revision++;
+    return true;
+  }
+
   load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
-      const data = JSON.parse(raw);
-      if (!data || data.v !== 1 || !Array.isArray(data.p)) return;
-      for (const rec of data.p) this.add(rec[0], rec[1], rec[2], rec[3]);
-      this.lastDeposit = null;
+      this._adopt(JSON.parse(raw));
     } catch (err) {
       console.warn('traces: could not load, starting empty', err);
     }
@@ -277,15 +380,27 @@ export class TraceStore {
     this._saveAt = now;
     if (this.readOnly) return;
     try {
+      // Only the names that still have a point to them are written. The
+      // oldest points are thinned away as a walk grows past its limit, and
+      // a walker whose last trace went with them is no longer one of this
+      // place's authors.
+      const slot = new Array(this.authors.length).fill(-1);
+      const who = [];
+      for (const q of this.points) {
+        const a = q.a < slot.length ? q.a : 0;
+        if (slot[a] < 0) { slot[a] = who.length; who.push(this.authors[a]); }
+      }
       const p = this.points.map((q) => [
         Math.round(q.x * 100) / 100,
         Math.round(q.z * 100) / 100,
         q.t0,
         Math.round(q.s * 100) / 100,
+        Math.max(0, slot[q.a < slot.length ? q.a : 0]),
       ]);
       // The count and the time go in the first few characters, so the next
       // save can tell what it is about to overwrite without reading it all.
-      const payload = JSON.stringify({ v: 1, n: p.length, at: now, p });
+      const payload =
+        JSON.stringify({ v: 2, n: p.length, at: now, who, p });
       this._keepOld(p.length);
       localStorage.setItem(STORAGE_KEY, payload);
     } catch (err) {
@@ -343,15 +458,7 @@ export class TraceStore {
     if (!raw) return 0;
     let data = null;
     try { data = JSON.parse(raw); } catch (err) { return 0; }
-    if (!data || !Array.isArray(data.p)) return 0;
-
-    this.points.length = 0;
-    this.fine.clear();
-    this.coarse.clear();
-    this.broad.clear();
-    this.lastDeposit = null;
-    for (const rec of data.p) this.add(rec[0], rec[1], rec[2], rec[3]);
-    this.revision++;
+    if (!this._adopt(data)) return 0;
     this._kept = null;
     // A read-only session can look at a kept walk without adopting it.
     this.save(true);

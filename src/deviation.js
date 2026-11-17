@@ -288,3 +288,157 @@ export function partyFrom(members) {
   for (const m of members) growth += m.growth || 0;
   return { growth: growth / members.length };
 }
+
+// ------------------------------------------------------- the air of a place
+//
+// A trace point carries its author, so a place knows everyone who ever
+// walked it. The air there is their mix, weighted by how awake each of them
+// has made it: your own line is your weather, somebody else's line is
+// theirs, and where two lines cross there is a third air that neither of
+// them has alone.
+//
+// The mix is a sum, never a sequence, so the order the authors are found in
+// cannot change the answer. Two clients that agree on who walked a place
+// get the same air out of this without agreeing on anything else, which is
+// the whole reason it lives here as a pure function and not in the
+// renderer.
+
+// What may differ from place to place.
+//
+// Not everything can. Four of a vector's numbers are never read off a
+// position at all: they are multiplied by the time since the world's epoch
+// to say where a drifting pattern has got to by now. That time is tens of
+// millions of seconds, so nudging the wind by a hundredth would carry the
+// cloud field a hundred lattices sideways between one frame and the next.
+// Anything placed by integrating against absolute time cannot vary by place
+// without jumping, so the wind, the cloud drift and the cloud's own scale
+// stay with the person looking. What mixes is what can be read straight off
+// a position: the light, the fog, the grain, the cover, the shade — and the
+// colours.
+const MIXED = [
+  'lightHeight', 'fogDensity', 'viewDistance',
+  'grainScale', 'grainStrength',
+  'cloudCover', 'cloudHeight', 'shadowStrength', 'sunAngle',
+];
+
+// A bearing has no ordinary mean: halfway between 350 and 10 degrees is 0,
+// not 180. Added as unit vectors it comes out right, and still in any order.
+const MIXED_ANGLES = ['lightAngle'];
+
+// Mixed as resolved colour, not as an index. Palette 2 and palette 9 are
+// two chosen things with nothing in between, while their colours do have a
+// middle. Mixed in the same space the shaders mix in, which is not linear
+// light: agreeing with everything else here is worth more than the half
+// stop of accuracy.
+function mixPalette(pals, w) {
+  const out = {};
+  for (const key of ['fog', 'zenith', 'groundHigh', 'groundLow', 'trace',
+    'light']) {
+    let r = 0, g = 0, b = 0;
+    for (let i = 0; i < pals.length; i++) {
+      const c = pals[i][key];
+      r += c[0] * w[i]; g += c[1] * w[i]; b += c[2] * w[i];
+    }
+    out[key] = [r, g, b];
+  }
+
+  // The band stacks are the one thing that will not mix cleanly. A stack is
+  // a geometry of layers, and two photographed skies have different numbers
+  // of them at different heights; `skyKind` is worse still, being a handful
+  // of features no stack of flat colour can say.
+  //
+  // So a stack is not blended away: it belongs to the air while the people
+  // whose sky has one hold the majority of it, and otherwise the sky is the
+  // plain ramp it is for the other twelve palettes. Within a stack the
+  // colours are mixed, so two stacked skies meet in colour and the layer
+  // heights come from whichever of them is strongest. That leaves one seam,
+  // at the half, between a stacked sky and an unstacked one — which takes
+  // two people and two particular palettes to see, and is written down here
+  // rather than worked around.
+  let lead = -1, leadW = 0, stacked = 0;
+  for (let i = 0; i < pals.length; i++) {
+    if (!pals[i].bands.length) continue;
+    stacked += w[i];
+    if (w[i] > leadW) { leadW = w[i]; lead = i; }
+  }
+  out.bands = [];
+  out.skyKind = 0;
+  if (lead >= 0 && stacked >= 0.5) {
+    const geom = pals[lead].bands;
+    for (let s = 0; s < geom.length; s++) {
+      let r = 0, g = 0, b = 0, sw = 0;
+      for (let i = 0; i < pals.length; i++) {
+        const band = pals[i].bands[s];
+        if (!band) continue;
+        r += band.rgb[0] * w[i]; g += band.rgb[1] * w[i];
+        b += band.rgb[2] * w[i]; sw += w[i];
+      }
+      const inv = sw > 1e-6 ? 1 / sw : 0;
+      out.bands.push({
+        at: geom[s].at, soft: geom[s].soft,
+        rgb: [r * inv, g * inv, b * inv],
+      });
+    }
+    out.skyKind = pals[lead].skyKind;
+  }
+  return out;
+}
+
+// `entries` is [{ dev, palette, weight }] — one per author of this place,
+// with weights that need not sum to one. `base` is the vector of the person
+// looking: it carries the fields that cannot vary by place, and it is the
+// whole answer where nobody has walked. `sharpen` is how reluctantly two
+// airs mix — at one they average, and higher up a place belongs more firmly
+// to whoever woke it most.
+//
+// Returns { dev, palette, parts }. The palette fields of `dev` are the
+// looker's own and mean nothing for the mix: the returned `palette` is the
+// one to draw with.
+export function mixAir(entries, base, sharpen = 1) {
+  const selfOnly = () => ({
+    dev: base, palette: paletteFrom(base),
+    parts: [{ identity: base.identity, weight: 1 }],
+  });
+  if (!entries || entries.length === 0) return selfOnly();
+
+  const k = Math.max(0.25, sharpen);
+  const w = [];
+  let total = 0;
+  for (const e of entries) {
+    const v = Math.pow(Math.max(0, e.weight), k);
+    w.push(v);
+    total += v;
+  }
+  if (!(total > 0)) return selfOnly();
+  for (let i = 0; i < w.length; i++) w[i] /= total;
+
+  const parts = entries
+    .map((e, i) => ({ identity: e.dev.identity, weight: w[i] }))
+    .sort((a, b) => b.weight - a.weight);
+
+  const dev = { ...base };
+  for (const key of MIXED) {
+    let v = 0;
+    for (let i = 0; i < entries.length; i++) v += entries[i].dev[key] * w[i];
+    dev[key] = v;
+  }
+  for (const key of MIXED_ANGLES) {
+    let x = 0, y = 0;
+    for (let i = 0; i < entries.length; i++) {
+      x += Math.cos(entries[i].dev[key]) * w[i];
+      y += Math.sin(entries[i].dev[key]) * w[i];
+    }
+    // Two opposite bearings cancel. Then there is no mean to speak of and
+    // the person looking keeps their own.
+    dev[key] = (x * x + y * y > 1e-8) ? Math.atan2(y, x) : base[key];
+  }
+
+  // One author is its own mix, and is handed back untouched rather than
+  // averaged with nothing: a world with a single walker has to be the world
+  // exactly as it was before any of this existed.
+  const palette = entries.length === 1
+    ? entries[0].palette
+    : mixPalette(entries.map((e) => e.palette), w);
+
+  return { dev, palette, parts };
+}
