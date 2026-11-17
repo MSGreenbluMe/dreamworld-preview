@@ -60,6 +60,7 @@ export function loadSettings(defaults) {
       trace: { ...defaults.trace, ...(saved.trace || {}) },
       region: { ...defaults.region, ...(saved.region || {}) },
       air: { ...defaults.air, ...(saved.air || {}) },
+      walker: { ...defaults.walker, ...(saved.walker || {}) },
       presence: { ...defaults.presence, ...(saved.presence || {}) },
       quality: { ...defaults.quality, ...(saved.quality || {}) },
     };
@@ -105,6 +106,13 @@ const AIR_FIELDS = [
   ['grainStrength', 'síla zrna', 0, 1.5, 0.01],
   ['sunAngle', 'velikost slunce', 0.02, 0.6, 0.005],
   ['skyProbe', 'dosah oblohy (m)', 5, 200, 1],
+];
+
+const WALKER_FIELDS = [
+  ['speed', 'rychlost (m/s)', 0.2, 4, 0.05],
+  ['range', 'okruh (m)', 30, 600, 5],
+  ['spacing', 'hustota stopy (m)', 0.4, 6, 0.1],
+  ['trail', 'délka stopy (bodů)', 0, 3000, 50],
 ];
 
 const CLOUD_FIELDS = [
@@ -153,6 +161,8 @@ const WASH_FIELDS = [
   ['washFresh', 'tmavost čerstvé', 0, 0.5, 0.01],
   ['washInk', 'obarvení stébel', 0.6, 2.2, 0.05],
   ['wetDry', 'schnutí (s)', 10, 600, 5],
+  ['meetGrow', 'křížení — růst', 0, 1.5, 0.01],
+  ['meetWet', 'křížení — vlhkost', 0, 1, 0.01],
 ];
 
 function formatValue(v, step) {
@@ -179,6 +189,7 @@ export function createUI(opts) {
     localBloom = () => 1, quality = () => null,
     onRestoreTraces = () => 0, traceStatus = () => null,
     airStatus = () => [], onVisitor = () => '',
+    walkerStatus = () => null, onClearWalker = () => 0,
   } = opts;
 
   const root = el('div', 'panel');
@@ -333,6 +344,71 @@ export function createUI(opts) {
   visitRow.appendChild(visitName);
   visitRow.appendChild(visitBtn);
   gair.appendChild(visitRow);
+
+  // ---------------------------------------------------------- the walker
+  const gwalk = addGroup('Druhý chodec',
+    'nikdo na druhém konci drátu — jeho cesta je funkce času, takže dva '
+    + 'stroje ho vidí na stejném místě; chodí po uzavřené dráze, takže se '
+    + 'vrací, a nechává za sebou stopu pod svým jménem');
+
+  addSlider(gwalk, 'zapnutý', 0, 1, 1,
+    () => settings.walker.on, (v) => { settings.walker.on = v; });
+
+  const walkRow = el('div', 'row');
+  const walkName = el('input', 'text');
+  walkName.type = 'text';
+  walkName.value = settings.walker.identity;
+  walkName.spellcheck = false;
+  walkName.addEventListener('change', () => {
+    settings.walker.identity = walkName.value;
+    onChange();
+  });
+  walkRow.appendChild(el('span', 'row-label', 'jméno'));
+  walkRow.appendChild(walkName);
+  walkRow.appendChild(el('span', 'row-value', ''));
+  gwalk.appendChild(walkRow);
+  refreshers.push(() => { walkName.value = settings.walker.identity; });
+
+  addFields(gwalk, WALKER_FIELDS, settings.walker);
+
+  const walkNote = el('div', 'group-note', '');
+  gwalk.appendChild(walkNote);
+
+  const walkClear = el('button', 'btn', 'smazat jeho stopy');
+  walkClear.title = 'Vezme zpátky jen jeho body. Tvoje zůstanou.';
+  walkClear.addEventListener('click', () => {
+    const n = onClearWalker();
+    walkClear.textContent = n > 0 ? 'smazáno: ' + n + ' bodů' : 'nic tu nemá';
+    refreshTraces();
+  });
+  const walkClearRow = el('div', 'row buttons');
+  walkClearRow.appendChild(walkClear);
+  gwalk.appendChild(walkClearRow);
+
+  // Where he is, in the only terms that help: how far, and whether to turn
+  // round. There is no north in this world yet to point at.
+  function whichWay(turn) {
+    const t = Math.abs(turn);
+    const side = turn > 0 ? 'vpravo' : 'vlevo';
+    if (t < 0.39) return 'přímo před tebou';
+    if (t < 1.18) return 'před tebou ' + side;
+    if (t < 1.96) return side;
+    if (t < 2.75) return 'za tebou ' + side;
+    return 'přímo za tebou';
+  }
+
+  function refreshWalker() {
+    const w = walkerStatus();
+    if (!w) { walkNote.textContent = ''; return; }
+    if (!w.on) {
+      walkNote.textContent = 'chodec je vypnutý'
+        + (w.points ? ' · po jeho stopě zbylo ' + w.points + ' bodů' : '');
+      return;
+    }
+    walkNote.textContent = w.identity + ' je ' + Math.round(w.distance)
+      + ' m ' + whichWay(w.turn) + ' · za sebou má ' + w.points + ' bodů';
+  }
+  live.push(refreshWalker);
 
   function refreshAir() {
     const parts = airStatus();

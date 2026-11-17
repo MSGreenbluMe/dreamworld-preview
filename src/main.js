@@ -25,6 +25,7 @@ import {
   makeHorizonUniforms, updateHorizonUniforms,
 } from './horizon.js';
 import { TraceStore, TraceField, DEFAULT_TRACE_PARAMS } from './traces.js';
+import { Walker, DEFAULT_WALKER } from './walker.js';
 import { Terrain } from './terrain.js';
 import { Sky } from './sky.js';
 import { Cover } from './cover.js';
@@ -83,6 +84,7 @@ function boot() {
     // whoever woke it most, with the mixed air narrowed to the seam between
     // them.
     air: { mix: 1.8 },
+    walker: { ...DEFAULT_WALKER },
     // Not traits of the world: how many pixels the card is asked for, and
     // whether it also has to multisample them. Hardware antialiasing costs
     // 16 ms of an empty frame at this size on integrated graphics, and this
@@ -157,6 +159,7 @@ function boot() {
   };
 
   const traces = new TraceStore(settings.trace, settings.identity);
+  const walker = new Walker(settings.walker);
   const field = new TraceField(renderer, traces);
   const terrain = new Terrain(
     [worldU, field.uniforms, personalU, cloudU, growthU, regionU]);
@@ -168,6 +171,8 @@ function boot() {
   scene.add(terrain.mesh);
 
   const player = new Player(canvas);
+  // Scratch, so asking where the walker is costs no allocation.
+  const walkerLook = new THREE.Vector3();
   const hud = createHUD();
   const hint = createHint();
   player.onLockChange = (locked) => hint.show(!locked);
@@ -353,6 +358,29 @@ function boot() {
     }),
     // Who the air here belongs to, for the panel to say out loud.
     airStatus: () => (air ? air.parts : []),
+    // Where the other walker is, in the only terms that help somebody
+    // trying to find them: how far, and whether to turn round.
+    walkerStatus: () => {
+      camera.getWorldDirection(walkerLook);
+      const b = walker.bearingFrom(player.position.x, player.position.z,
+        walkerLook.x, walkerLook.z);
+      return {
+        on: !!settings.walker.on,
+        identity: settings.walker.identity,
+        distance: b.distance,
+        turn: b.turn,
+        points: traces.countOf(settings.walker.identity),
+      };
+    },
+    // Takes back every point the walker laid, and nothing else. The one
+    // thing authorship makes easy that was not possible before.
+    onClearWalker: () => {
+      const n = traces.trimAuthor(settings.walker.identity, 0);
+      walker.last = null;
+      field.draw(clock.nowMs());
+      traces.save(true);
+      return n;
+    },
     // Somebody else's line, laid across the way ahead.
     //
     // This is not the second walker — that is its own step, with a vector
@@ -433,7 +461,7 @@ function boot() {
     // does it: ask, and the next frame applies it.
     askResize: () => { resizeDue = true; },
     presence: () => presence, bloomHere: () => bloomHere,
-    air: () => air,
+    air: () => air, walker,
     authorsHere: () => traces.authorsAt(
       player.position.x, player.position.z, clock.nowMs()),
   };
@@ -463,6 +491,12 @@ function boot() {
         + (governor.helpless ? ' · zdržuje to něco jiného' : ''),
       'stopy: ' + traces.points.length + ' bodů · zálohy: ' + kept
         + (traces.readOnly ? ' · jen pro čtení' : ''),
+      'druhý chodec: ' + (settings.walker.on
+        ? settings.walker.identity + ' · '
+          + traces.countOf(settings.walker.identity) + ' bodů · '
+          + Math.round(walker.bearingFrom(player.position.x,
+            player.position.z, 0, -1).distance) + ' m'
+        : 'vypnutý'),
       'vzduch zde: ' + (air && air.parts.length
         ? air.parts.map((q) => q.identity + ' '
           + Math.round(q.weight * 100) + ' %').join(' · ')
@@ -530,6 +564,12 @@ function boot() {
         traces.save(false);
       }
     }
+
+    // Somebody else, walking. Its trail is not worth a save of its own —
+    // the store writes itself out when the player walks and when the page
+    // goes away, and that is often enough for a trail that forgets its own
+    // beginning anyway.
+    walker.update(seconds, wallNow, traces);
 
     // What is overhead belongs to the ground underfoot: the sky opens over
     // woken land and closes again over the Nothing.

@@ -5,20 +5,30 @@ projekt, jeho dokumenty a historie tu nejsou.
 
 **Otevřít:** https://msgreenblume.github.io/dreamworld-preview/
 
-## Co je nového — build 141469f
+## Co je nového — build 1bf1a52
 
-Stopa si pamatuje, kdo ji udělal, a **vzduch místa je směs jeho autorů**.
-Kde jsi chodil ty, je tvoje počasí; kde chodil někdo jiný, je jeho.
+**Po světě chodí ještě někdo.** Jmenuje se poutník, chodí po uzavřené
+dráze kolem počátku, takže se vrací, a nechává za sebou stopu pod svým
+jménem. Není to nikdo na druhém konci drátu — jeho cesta je prostě funkce
+času.
 
-V panelu (**H**) přibyla skupina **Vzduch místa**:
+V panelu (**H**) je nová skupina **Druhý chodec**:
 
-- řádek *vzduch zde: …* říká, čí je vzduch tam, kde zrovna stojíš
-- **prošel tu** položí přes cestu před tebou stopu pod cizím jménem —
-  vejdi do ní a svět kolem se změní na jeho
-- **míchání** říká, jak neochotně se dva vzduchy mísí
+- řádek pod posuvníky říká, **kde je**: „poutník je 83 m před tebou
+  vlevo". Podle toho se dá najít.
+- **smazat jeho stopy** vezme zpátky jen jeho body, tvoje zůstanou
+- dá se vypnout, přejmenovat, zrychlit a poslat na širší okruh
 
-Mění se barva země a oblohy, světlo, dohlednost a mraky. Zem pod nohama
-se nemění nikdy, ta je společná pro všechny.
+Co stojí za vyzkoušení: **dojdi k jeho stopě a vejdi do ní.** Vzduch se
+změní na jeho — barva země a oblohy, světlo, dohlednost. Ve skupině
+**Vzduch místa** je přitom vidět, čí vzduch zrovna dýcháš.
+
+A tam, **kde se vaše čáry kříží**, drží papír víc, než tam kdo z vás
+položil: barva sahá dál, nikdy tam úplně neuschne a roste tam víc
+porostu. Je to jediná věc v tomhle světě, která se nedá mít o samotě.
+Zesílit se to dá v **Rozpití** → *křížení — růst* a *křížení — vlhkost*.
+
+Zem pod nohama se nemění nikdy, ta je společná pro všechny.
 
 - chůze **WASD**, běh **Shift**, rozhlížení **myší** (klikni do obrazu)
 - **H** ukáže a skryje panel

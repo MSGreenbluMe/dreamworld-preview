@@ -122,6 +122,12 @@ export const DEFAULT_TRACE_PARAMS = {
   // of half-woken ground under everything; turned up it swallows the
   // wash's edge, turned down the walked line is all there is.
   washWake: 0.20,
+
+  // Where two people's lines cross. This is the one thing in the world
+  // that cannot be had alone: the second largest of the blooms here, which
+  // is zero everywhere one person has walked by themselves.
+  meetGrow: 0.55,   // how much further the paint reaches at a crossing
+  meetWet: 0.50,    // and how much of it never quite dries there
 };
 
 // ------------------------------------------------------------------ store
@@ -325,6 +331,40 @@ export class TraceStore {
     });
   }
 
+  // How many points one author has laid. Counted rather than kept as a
+  // tally: a tally would have to stay right through thinning, trimming,
+  // loading, restoring and clearing, and a wrong one is worse than a loop
+  // over six thousand numbers a few times a second.
+  countOf(name) {
+    const a = this.authors.indexOf(name);
+    if (a < 0) return 0;
+    let n = 0;
+    for (const p of this.points) if (p.a === a) n++;
+    return n;
+  }
+
+  // Keeps the newest `keep` points of one author and drops the rest.
+  //
+  // The walked line of a player persists; the trail of somebody passing
+  // through is a passing thing. Without this, a walker who never stopped
+  // would fill the store in an afternoon and the thinning would start at
+  // the oldest point there is, which is the player's first step.
+  trimAuthor(name, keep) {
+    const a = this.authors.indexOf(name);
+    if (a < 0) return 0;
+    let drop = this.countOf(name) - Math.max(0, keep);
+    if (drop <= 0) return 0;
+    const dropped = drop;
+    const left = [];
+    for (const p of this.points) {
+      if (p.a === a && drop > 0) { drop--; continue; }
+      left.push(p);
+    }
+    this.points = left;
+    this.reindex();
+    return dropped;
+  }
+
   clear() {
     this.points.length = 0;
     this.authors.length = 0;
@@ -495,6 +535,45 @@ void main() {
 }
 `;
 
+// Each author gets a pass of their own, and the passes are folded together
+// by this: the largest bloom here, the wettest paint here, and the second
+// largest bloom — which is the meeting.
+//
+// The second largest is the right measure and not a convenience. It is
+// symmetric, so it cannot matter who is called the visitor; it is the same
+// in any order, so two machines that find the authors differently still
+// agree; and it is zero wherever one person has walked alone, which is why
+// a world with a single walker is the world exactly as it was.
+//
+// More authors than there are passes would be a world where this gets
+// expensive, so beyond a limit the quietest of them share the last pass.
+// Sharing can only lose a meeting, never invent one.
+const MAX_AUTHOR_PASSES = 8;
+
+const COMBINE_VERT = /* glsl */`
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+
+const COMBINE_FRAG = /* glsl */`
+varying vec2 vUv;
+uniform sampler2D uPrev;   // r largest so far, g wettest so far, b second
+uniform sampler2D uOne;    // r this author's bloom, g this author's wet
+void main() {
+  vec4 a = texture2D(uPrev, vUv);
+  float v = texture2D(uOne, vUv).r;
+  float w = texture2D(uOne, vUv).g;
+  gl_FragColor = vec4(
+    max(a.r, v),
+    max(a.g, w),
+    max(a.b, min(a.r, v)),
+    1.0);
+}
+`;
+
 // The two fields differ only in how wide they are, how far they reach and
 // what each point is worth. Everything else is the same machine.
 const DEPTH_CONFIG = {
@@ -520,6 +599,10 @@ const BLOOM_CONFIG = {
   // from then on. What has woken never sleeps, but it does dry.
   weight2: (params) => (p, age) =>
     p.s * Math.exp(-age / Math.max(1, params.wetDry)),
+  // Drawn one author at a time and folded together, which is how the third
+  // channel — the meeting — comes to exist. It costs no more points drawn:
+  // the same points, in batches.
+  byAuthor: true,
 };
 
 const WAKE_CONFIG = {
@@ -531,6 +614,25 @@ const WAKE_CONFIG = {
     p.s * Math.min(1, age / Math.max(0.001, params.wakeRise)),
 };
 
+// Reused: what the renderer was clearing to before a field took it over.
+const KEPT_CLEAR = new THREE.Color();
+
+function makeFieldTarget(texels) {
+  const t = new THREE.WebGLRenderTarget(texels, texels, {
+    format: THREE.RGBAFormat,
+    // Half float: a groove is a few centimetres deep and the bloom is a
+    // long smooth ramp; eight bits would terrace both.
+    type: THREE.HalfFloatType,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: false,
+    generateMipmaps: false,
+  });
+  t.texture.wrapS = THREE.ClampToEdgeWrapping;
+  t.texture.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+}
+
 class PointField {
   constructor(renderer, store, config) {
     this.renderer = renderer;
@@ -540,18 +642,29 @@ class PointField {
     this.lastDraw = -1e9;
     this.drawnRevision = -1;
 
-    this.target = new THREE.WebGLRenderTarget(config.texels, config.texels, {
-      format: THREE.RGBAFormat,
-      // Half float: a groove is a few centimetres deep and the bloom is a
-      // long smooth ramp; eight bits would terrace both.
-      type: THREE.HalfFloatType,
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      depthBuffer: false,
-      generateMipmaps: false,
-    });
-    this.target.texture.wrapS = THREE.ClampToEdgeWrapping;
-    this.target.texture.wrapT = THREE.ClampToEdgeWrapping;
+    this.target = makeFieldTarget(config.texels);
+
+    // Drawn one author at a time: a scratch to splat each of them into,
+    // and a second accumulator, because a pass cannot read the texture it
+    // is writing to.
+    if (config.byAuthor) {
+      this.spare = makeFieldTarget(config.texels);
+      this.scratch = makeFieldTarget(config.texels);
+      this.counts = [];
+      this.combine = new THREE.ShaderMaterial({
+        uniforms: { uPrev: { value: null }, uOne: { value: null } },
+        vertexShader: COMBINE_VERT,
+        fragmentShader: COMBINE_FRAG,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.NoBlending,
+      });
+      this.combineScene = new THREE.Scene();
+      const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.combine);
+      quad.frustumCulled = false;
+      this.combineScene.add(quad);
+      this.combineCamera = new THREE.Camera();
+    }
 
     const half = config.size / 2;
     this.camera = new THREE.OrthographicCamera(-half, half, half, -half, -1, 1);
@@ -613,21 +726,18 @@ class PointField {
     }
   }
 
-  draw(now) {
-    this.lastDraw = now;
-    this.drawnRevision = this.store.revision;
-
+  // Loads the buffers with the points that fall in this field's window.
+  // `only` is a list of author slots to take, or null for all of them.
+  _fill(now, radius, only) {
     const params = this.store.params;
-    const radius = this.config.radius(params);
     const weight = this.config.weight(params);
     const weight2 = this.config.weight2 ? this.config.weight2(params) : null;
-    this.material.uniforms.uRadius.value = radius;
-
     const half = this.config.size / 2 + radius;
     const pos = this.posArray;
     const val = this.valArray;
     let count = 0;
     for (const p of this.store.points) {
+      if (only && only.indexOf(p.a) < 0) continue;
       const dx = p.x - this.center.x;
       const dz = p.z - this.center.y;
       if (Math.abs(dx) > half || Math.abs(dz) > half) continue;
@@ -640,25 +750,81 @@ class PointField {
       count++;
       if (count >= MAX_POINTS) break;
     }
-
     this.posAttr.needsUpdate = true;
     this.valAttr.needsUpdate = true;
     this.geometry.setDrawRange(0, count);
+    return count;
+  }
+
+  // Which authors have anything in this window, one list per pass.
+  _authorGroups(radius) {
+    const half = this.config.size / 2 + radius;
+    const counts = this.counts;
+    counts.length = this.store.authors.length;
+    for (let i = 0; i < counts.length; i++) counts[i] = 0;
+    for (const p of this.store.points) {
+      if (Math.abs(p.x - this.center.x) > half) continue;
+      if (Math.abs(p.z - this.center.y) > half) continue;
+      counts[p.a < counts.length ? p.a : 0]++;
+    }
+    const present = [];
+    for (let i = 0; i < counts.length; i++) if (counts[i] > 0) present.push(i);
+    if (present.length <= MAX_AUTHOR_PASSES) return present.map((i) => [i]);
+    present.sort((a, b) => counts[b] - counts[a]);
+    const groups = present.slice(0, MAX_AUTHOR_PASSES - 1).map((i) => [i]);
+    groups.push(present.slice(MAX_AUTHOR_PASSES - 1));
+    return groups;
+  }
+
+  draw(now) {
+    this.lastDraw = now;
+    this.drawnRevision = this.store.revision;
+    const radius = this.config.radius(this.store.params);
+    this.material.uniforms.uRadius.value = radius;
 
     const r = this.renderer;
     const prevTarget = r.getRenderTarget();
-    const prevClear = r.getClearColor(new THREE.Color());
+    const prevClear = r.getClearColor(KEPT_CLEAR).clone();
     const prevAlpha = r.getClearAlpha();
-    r.setRenderTarget(this.target);
     r.setClearColor(0x000000, 1);
-    r.clear(true, false, false);
-    if (count > 0) r.render(this.scene, this.camera);
+
+    if (!this.config.byAuthor) {
+      const count = this._fill(now, radius, null);
+      r.setRenderTarget(this.target);
+      r.clear(true, false, false);
+      if (count > 0) r.render(this.scene, this.camera);
+    } else {
+      // The accumulator starts empty, and every author is splatted on
+      // their own and folded in. With one author the fold writes a second
+      // largest of zero, which is the whole of what it is to be alone.
+      r.setRenderTarget(this.target);
+      r.clear(true, false, false);
+      for (const group of this._authorGroups(radius)) {
+        const count = this._fill(now, radius, group);
+        r.setRenderTarget(this.scratch);
+        r.clear(true, false, false);
+        if (count > 0) r.render(this.scene, this.camera);
+        this.combine.uniforms.uPrev.value = this.target.texture;
+        this.combine.uniforms.uOne.value = this.scratch.texture;
+        r.setRenderTarget(this.spare);
+        r.render(this.combineScene, this.combineCamera);
+        const swap = this.target;
+        this.target = this.spare;
+        this.spare = swap;
+      }
+      // The answer moved between two textures on the way here.
+      this.uniforms[this.config.prefix + 'Map'].value = this.target.texture;
+    }
+
     r.setRenderTarget(prevTarget);
     r.setClearColor(prevClear, prevAlpha);
   }
 
   dispose() {
     this.target.dispose();
+    if (this.spare) this.spare.dispose();
+    if (this.scratch) this.scratch.dispose();
+    if (this.combine) this.combine.dispose();
     this.geometry.dispose();
     this.material.dispose();
   }
@@ -682,6 +848,8 @@ export class TraceField {
         uWashFresh: { value: P.washFresh },
         uWashInk: { value: P.washInk },
         uWashWake: { value: P.washWake },
+        uMeetGrow: { value: P.meetGrow },
+        uMeetWet: { value: P.meetWet },
       },
       this.depth.uniforms,
       this.bloom.uniforms,
@@ -700,6 +868,8 @@ export class TraceField {
     this.uniforms.uWashRim.value = P.washRim;
     this.uniforms.uWashFresh.value = P.washFresh;
     this.uniforms.uWashInk.value = P.washInk;
+    this.uniforms.uMeetGrow.value = P.meetGrow;
+    this.uniforms.uMeetWet.value = P.meetWet;
     this.depth.update(playerX, playerZ, now);
     this.bloom.update(playerX, playerZ, now);
     this.wake.update(playerX, playerZ, now);
@@ -756,15 +926,18 @@ uniform sampler2D uBloomMap;
 uniform vec2 uBloomCenter;
 uniform float uBloomFieldSize;
 
-// Both numbers this field holds, in one fetch:
+// All three numbers this field holds, in one fetch:
 //   x — how awake a place is, 0 to 1. Zero is the Nothing.
 //   y — how wet it still is. One the moment it was walked, drying after.
-vec2 dwBloomWet(vec2 p) {
+//   z — the meeting: how far a second person's waking reaches here. Zero
+//       wherever one person has walked alone, which is everywhere until
+//       somebody else comes.
+vec3 dwBloomWet(vec2 p) {
   vec2 uv = (p - uBloomCenter) / uBloomFieldSize + 0.5;
   vec2 edge = smoothstep(0.0, 0.02, uv) * smoothstep(0.0, 0.02, 1.0 - uv);
   float w = edge.x * edge.y;
-  if (w <= 0.0) return vec2(0.0);
-  return clamp(texture2D(uBloomMap, uv).rg, 0.0, 1.0) * w;
+  if (w <= 0.0) return vec3(0.0);
+  return clamp(texture2D(uBloomMap, uv).rgb, 0.0, 1.0) * w;
 }
 
 float dwBloom(vec2 p) { return dwBloomWet(p).x; }
@@ -788,6 +961,8 @@ uniform float uWashWake;      // how much the wide wake alone lights ground
 uniform float uWashRim;       // how dark the pigment gathers at the front
 uniform float uWashFresh;     // how much darker the wash is while wet
 uniform float uWashInk;       // how readily the colour climbs a blade
+uniform float uMeetGrow;      // how much further paint reaches at a crossing
+uniform float uMeetWet;       // and how much of it never quite dries there
 
 // The detail argument is how much of the front's fringe is worth drawing
 // here: one close up, zero where the fog has taken the ground. It buys back
@@ -801,9 +976,17 @@ uniform float uWashInk;       // how readily the colour climbs a blade
 //   z — the rim: pigment gathered at the front of the wash
 //   w — the plain bloom underneath, for whatever still asks for it
 vec4 dwWash(vec2 p, float ceiling, float detail) {
-  vec2 bw = dwBloomWet(p);
+  vec3 bw = dwBloomWet(p);
   float woken = ceiling * bw.x;
   float broad = ceiling * dwWake(p);
+
+  // Where two people's lines crossed, the paper holds more than either of
+  // them laid on it. The paint reaches further there and it stays wet,
+  // long after both of their own lines have dried — the one thing in this
+  // world that cannot be had by walking alone. Both of these are folded in
+  // before anything is decided, so the cover that grows on a crossing and
+  // the ground it grows out of are asking the same question.
+  float meet = ceiling * bw.z;
 
   // Paint does not stop in a circle. The front runs ahead here and hangs
   // back there, and the noise that decides which is read from the world
@@ -815,7 +998,7 @@ vec4 dwWash(vec2 p, float ceiling, float detail) {
   // or a stray crest of noise would light an island in the Nothing where
   // nobody has ever walked. It also means the noise is only evaluated in a
   // thin ring of the picture, which is most of why this is affordable.
-  float field = woken;
+  float field = woken + uMeetGrow * meet;
   float band = smoothstep(0.02, 0.10, field)
     * (1.0 - smoothstep(0.28, 0.46, field)) * detail;
   if (band > 0.002 && uWash * uWashRag > 0.001) {
@@ -847,6 +1030,7 @@ vec4 dwWash(vec2 p, float ceiling, float detail) {
   // the edge hardens, the way a drying pool does.
   float rim = uWash * front * (1.0 - front) * 4.0;
 
-  return vec4(alive, uWash * bw.y, rim, woken);
+  return vec4(alive, uWash * clamp(bw.y + uMeetWet * meet, 0.0, 1.0),
+    rim, woken);
 }
 `;
