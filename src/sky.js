@@ -19,6 +19,12 @@ import { MONUMENT_GLSL } from './monument.js';
 import { MAX_BANDS } from './deviation.js';
 import { HORIZON_GLSL } from './horizon.js';
 
+// How many other people the sky can lean towards at once. Four is not a
+// limit on the world; it is a limit on one pixel's work, and a fifth
+// person simply does not light the sky until one of the four is further
+// off than they are.
+export const MAX_OTHERS = 4;
+
 const VERT = /* glsl */`
 varying vec3 vDir;
 void main() {
@@ -47,6 +53,12 @@ uniform float uBandAt[${MAX_BANDS}];
 uniform float uBandSoft[${MAX_BANDS}];
 uniform vec3 uBandCol[${MAX_BANDS}];
 uniform float uSkyKind;     // 1 towers after rain, 2 a mackerel morning
+uniform float uOtherCount;  // how many other people are out there
+uniform vec2 uOtherDir[${MAX_OTHERS}];   // unit, on the ground, towards them
+uniform vec3 uOtherCol[${MAX_OTHERS}];   // their light, not yours
+uniform float uOtherNear[${MAX_OTHERS}]; // 1 beside you, fading with distance
+uniform float uCompass;     // how much of their light the sky takes
+uniform float uCompassWide; // how broad the lean is
 varying vec3 vDir;
 
 void main() {
@@ -151,6 +163,25 @@ void main() {
   }
 
   col = mix(col, sky, presSky);
+
+  // Somebody else, out there.
+  //
+  // The sky towards another person takes a little of their light, and only
+  // theirs — so alone it is entirely your own, with nothing added and
+  // nothing to switch off. It is a wide soft lean and not a spot, because
+  // it has to be findable by turning round, not by aiming.
+  //
+  // Not gated by the woken sky above it. Their light is theirs and it
+  // exists because they do: over the Nothing, where this world has no sky
+  // at all, it is the one thing that says you are not the only one.
+  for (int i = 0; i < ${MAX_OTHERS}; i++) {
+    if (float(i) >= uOtherCount) break;
+    float towards = dot(flatDir / len, uOtherDir[i]) * 0.5 + 0.5;
+    float lean = pow(towards, uCompassWide);
+    // Low, where somebody standing on the ground would be.
+    float low = 1.0 - smoothstep(0.0, 0.62, d.y);
+    col = mix(col, uOtherCol[i], uCompass * lean * low * uOtherNear[i]);
+  }
 
   // The one enormous thing. Not gated by the bloom: it stands on the far
   // world, and something to walk towards is the whole point of it.

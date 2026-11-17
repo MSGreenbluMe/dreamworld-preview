@@ -27,7 +27,7 @@ import {
 import { TraceStore, TraceField, DEFAULT_TRACE_PARAMS } from './traces.js';
 import { Walker, DEFAULT_WALKER } from './walker.js';
 import { Terrain } from './terrain.js';
-import { Sky } from './sky.js';
+import { Sky, MAX_OTHERS } from './sky.js';
 import { Cover } from './cover.js';
 import {
   DEFAULT_REGION, regionHeight, makeRegionUniforms, applyRegionToUniforms,
@@ -83,7 +83,15 @@ function boot() {
     // one it is a plain average; higher, and a place belongs more firmly to
     // whoever woke it most, with the mixed air narrowed to the seam between
     // them.
-    air: { mix: 1.8 },
+    air: {
+      mix: 1.8,
+      // The sky as a compass: how much of another person's light it takes
+      // in their direction, how broad that lean is, and how far away
+      // somebody can be and still tint it.
+      compass: 0.22,
+      compassWide: 7.0,
+      compassReach: 260,
+    },
     walker: { ...DEFAULT_WALKER },
     // Not traits of the world: how many pixels the card is asked for, and
     // whether it also has to multisample them. Hardware antialiasing costs
@@ -142,6 +150,19 @@ function boot() {
   // Growth reaches the ground shader as a place, not as a number: the
   // ceiling is what this person's life allows to wake, and the bloom field
   // says where it has actually woken.
+  // Who else is out there, as the sky needs to know it: which way, what
+  // light, and how near. Empty is the ordinary case and costs one compare.
+  const compassU = {
+    uOtherCount: { value: 0 },
+    uOtherDir: { value: Array.from({ length: MAX_OTHERS },
+      () => new THREE.Vector2(1, 0)) },
+    uOtherCol: { value: Array.from({ length: MAX_OTHERS },
+      () => new THREE.Vector3()) },
+    uOtherNear: { value: new Array(MAX_OTHERS).fill(0) },
+    uCompass: { value: 0 },
+    uCompassWide: { value: 7 },
+  };
+
   const growthU = {
     uGrowthCeiling: { value: 0 },
     uPartyCeiling: { value: 0 },
@@ -165,7 +186,7 @@ function boot() {
     [worldU, field.uniforms, personalU, cloudU, growthU, regionU]);
   const sky = new Sky(
     [worldU, personalU, cloudU, growthU, monumentU, horizonU,
-      field.uniforms]);
+      field.uniforms, compassU]);
   const cover = new Cover(
     [worldU, personalU, growthU, regionU, field.uniforms]);
   scene.add(terrain.mesh);
@@ -188,6 +209,9 @@ function boot() {
   // Reused rather than rebuilt, because this is worked out every frame.
   const airEntries = [];
   let air = null;
+  // Everyone else who is here now. Today that is the scripted walker; when
+  // there is a network it is whoever else is standing in this world.
+  const others = [];
 
   // What the ground is allowed to know about the people on it: the mix of
   // everyone present, never one person's own vector. With one player the
@@ -303,6 +327,8 @@ function boot() {
     growthU.uPresenceCover.value =
       presenceFrom(d.growth, settings.presence).groundCover;
     growthU.uSkyProbe.value = d.skyProbe;
+    compassU.uCompass.value = settings.air.compass;
+    compassU.uCompassWide.value = Math.max(1, settings.air.compassWide);
     party = partyFrom([{ growth: d.growth }]);
     growthU.uPartyCeiling.value = party.growth;
     // The law shapes the shared ground, so it answers to the party mix.
@@ -358,6 +384,12 @@ function boot() {
     }),
     // Who the air here belongs to, for the panel to say out loud.
     airStatus: () => (air ? air.parts : []),
+    // What the sky is leaning towards, if anybody.
+    compassStatus: () => others.map((one) => ({
+      identity: one.identity,
+      distance: Math.hypot(one.x - player.position.x,
+        one.z - player.position.z),
+    })),
     // Where the other walker is, in the only terms that help somebody
     // trying to find them: how far, and whether to turn round.
     walkerStatus: () => {
@@ -563,6 +595,32 @@ function boot() {
       if (traces.deposit(player.position.x, player.position.z, wallNow)) {
         traces.save(false);
       }
+    }
+
+    // Which way the sky leans. The list is built fresh every frame
+    // because it is about where people are, not where they have been, and
+    // when it is empty nothing is added to the sky at all.
+    others.length = 0;
+    if (settings.walker.on) {
+      others.push({
+        identity: settings.walker.identity, x: walker.x, z: walker.z,
+      });
+    }
+    compassU.uOtherCount.value = Math.min(others.length, MAX_OTHERS);
+    for (let i = 0; i < compassU.uOtherCount.value; i++) {
+      const one = others[i];
+      const dx = one.x - player.position.x;
+      const dz = one.z - player.position.z;
+      const distance = Math.hypot(dx, dz);
+      const inv = distance > 0.001 ? 1 / distance : 0;
+      compassU.uOtherDir.value[i].set(dx * inv, dz * inv);
+      const light = vectorOf(one.identity).palette.light;
+      compassU.uOtherCol.value[i].set(light[0], light[1], light[2]);
+      // Never quite nothing, however far off they are: a lean that stops
+      // at a line would make the sky a device with a range rather than a
+      // sky with somebody in it.
+      const reach = Math.max(10, settings.air.compassReach);
+      compassU.uOtherNear.value[i] = reach / (reach + distance);
     }
 
     // Somebody else, walking. Its trail is not worth a save of its own —

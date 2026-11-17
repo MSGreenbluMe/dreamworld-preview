@@ -190,6 +190,7 @@ export function createUI(opts) {
     onRestoreTraces = () => 0, traceStatus = () => null,
     airStatus = () => [], onVisitor = () => '',
     walkerStatus = () => null, onClearWalker = () => 0,
+    compassStatus = () => [],
   } = opts;
 
   const root = el('div', 'panel');
@@ -409,6 +410,33 @@ export function createUI(opts) {
       + ' m ' + whichWay(w.turn) + ' · za sebou má ' + w.points + ' bodů';
   }
   live.push(refreshWalker);
+
+  // --------------------------------------------------------- the compass
+  const gcompass = addGroup('Obloha jako kompas',
+    'obloha si bere trochu světla toho, kdo je tím směrem — je to široké '
+    + 'naklonění, ne bod, aby se to dalo najít otáčením; sám jsi, a obloha '
+    + 'je celá tvoje');
+
+  addSlider(gcompass, 'síla', 0, 0.8, 0.01,
+    () => settings.air.compass, (v) => { settings.air.compass = v; });
+  addSlider(gcompass, 'šířka', 1, 24, 0.5,
+    () => settings.air.compassWide, (v) => { settings.air.compassWide = v; });
+  addSlider(gcompass, 'dosah (m)', 20, 1200, 10,
+    () => settings.air.compassReach,
+    (v) => { settings.air.compassReach = v; });
+
+  const compassNote = el('div', 'group-note', '');
+  gcompass.appendChild(compassNote);
+
+  function refreshCompass() {
+    const who = compassStatus();
+    compassNote.textContent = who.length
+      ? 'obloha se naklání k: ' + who
+        .map((q) => q.identity + ' (' + Math.round(q.distance) + ' m)')
+        .join(' · ')
+      : 'nikdo jiný tu není — obloha je celá tvoje';
+  }
+  live.push(refreshCompass);
 
   function refreshAir() {
     const parts = airStatus();

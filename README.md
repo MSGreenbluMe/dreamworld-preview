@@ -5,28 +5,35 @@ projekt, jeho dokumenty a historie tu nejsou.
 
 **Otevřít:** https://msgreenblume.github.io/dreamworld-preview/
 
-## Co je nového — build 1bf1a52
+## Co je nového — build 20e4d91
 
-**Po světě chodí ještě někdo.** Jmenuje se poutník, chodí po uzavřené
-dráze kolem počátku, takže se vrací, a nechává za sebou stopu pod svým
-jménem. Není to nikdo na druhém konci drátu — jeho cesta je prostě funkce
-času.
+**Obloha se naklání k tomu, kdo je poblíž.** Ve směru, kde je druhý
+chodec, si obloha bere trochu jeho světla — nízko nad obzorem, široce,
+takže se to dá najít otáčením, ne mířením. Když jsi sám, obloha je celá
+tvoje, beze změny.
 
-V panelu (**H**) je nová skupina **Druhý chodec**:
+Je to schválně tiché. Zesílit se to dá ve skupině **Obloha jako kompas**
+posuvníkem *síla*; *dosah* říká, jak daleko může někdo být a ještě oblohu
+obarvit.
 
-- řádek pod posuvníky říká, **kde je**: „poutník je 83 m před tebou
-  vlevo". Podle toho se dá najít.
-- **smazat jeho stopy** vezme zpátky jen jeho body, tvoje zůstanou
-- dá se vypnout, přejmenovat, zrychlit a poslat na širší okruh
+**Po světě chodí ještě někdo** — poutník. Chodí po uzavřené dráze kolem
+počátku, takže se vrací, a nechává za sebou stopu pod svým jménem. Není
+to nikdo na druhém konci drátu, jeho cesta je prostě funkce času.
 
-Co stojí za vyzkoušení: **dojdi k jeho stopě a vejdi do ní.** Vzduch se
-změní na jeho — barva země a oblohy, světlo, dohlednost. Ve skupině
-**Vzduch místa** je přitom vidět, čí vzduch zrovna dýcháš.
+Ve skupině **Druhý chodec** je řádek, který říká, kde je: „poutník je
+83 m před tebou vlevo". **smazat jeho stopy** vezme zpátky jen jeho body.
 
-A tam, **kde se vaše čáry kříží**, drží papír víc, než tam kdo z vás
-položil: barva sahá dál, nikdy tam úplně neuschne a roste tam víc
-porostu. Je to jediná věc v tomhle světě, která se nedá mít o samotě.
-Zesílit se to dá v **Rozpití** → *křížení — růst* a *křížení — vlhkost*.
+Co stojí za vyzkoušení:
+
+1. **Najdi ho podle oblohy** — otáčej se a sleduj, kde se nebe nízko nad
+   obzorem otepluje. Panel ti to potvrdí.
+2. **Vejdi do jeho stopy.** Vzduch se změní na jeho — barva země a
+   oblohy, světlo, dohlednost. Skupina **Vzduch místa** ukazuje, čí
+   vzduch zrovna dýcháš.
+3. **Projdi tam, kde se vaše čáry kříží.** Drží tam papír víc, než tam
+   kdo z vás položil: barva sahá dál, nikdy tam úplně neuschne a roste
+   tam víc porostu. Je to jediná věc tady, která se nedá mít o samotě.
+   Zesílit v **Rozpití** → *křížení — růst*, *křížení — vlhkost*.
 
 Zem pod nohama se nemění nikdy, ta je společná pro všechny.
 
