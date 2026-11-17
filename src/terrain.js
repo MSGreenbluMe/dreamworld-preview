@@ -20,6 +20,7 @@ import { WORLD_GLSL } from './world.js';
 import { TRACE_GLSL, BLOOM_GLSL, WAKE_GLSL, WASH_GLSL } from './traces.js';
 import { CLOUD_GLSL, MIST_SCALE, MIST_PERIOD } from './clouds.js';
 import { REGION_GLSL } from './region.js';
+import { FIGURE_GLSL } from './figure.js';
 
 const ANGULAR = 160;   // vertices around
 const RINGS = 112;     // vertices outward
@@ -68,6 +69,10 @@ uniform float uFogDensity;
 uniform float uViewDistance;
 uniform float uGrainScale;
 uniform float uGrainStrength;
+uniform float uFigShadow;   // how dark an outline falls on the ground
+uniform vec3 uFigPos;       // the other walker's feet
+uniform float uFigHeight;
+uniform float uFigOn;
 uniform float uGrowthCeiling;      // how much world this person can wake
 uniform vec2 uWinCloudShadows;     // the window that element fades in over
 uniform float uOvrCloudShadows;    // >= 0 forces it, for tuning by hand
@@ -122,6 +127,20 @@ void main() {
 
   // Wet paint is darker than dry paint, and pales again as it dries.
   value *= 1.0 - uWashFresh * wet * alive;
+
+  // The one thing the player ever sees of their own shape, and the thing
+  // that puts somebody else's figure on the ground instead of in front of
+  // it. Both are the same outline, sheared by the same light, so a person
+  // and their shadow can never be two different shapes.
+  if (uFigShadow > 0.001) {
+    float mine = dwFigureShadow(vWorld.xz, cameraPosition.xz,
+                                uFigHeight, uLightDir);
+    if (uFigOn > 0.5) {
+      mine = max(mine, dwFigureShadow(vWorld.xz, uFigPos.xz,
+                                      uFigHeight, uLightDir));
+    }
+    value *= 1.0 - uFigShadow * mine * alive;
+  }
 
   vec3 tint = mix(uGroundHigh, uGroundLow, clamp(0.5 + g * 0.85, 0.0, 1.0));
   tint = mix(tint, uTraceTint, resolved * 0.5 * alive);
@@ -208,7 +227,7 @@ export class Terrain {
       vertexShader: WORLD_GLSL + TRACE_GLSL + BLOOM_GLSL + WAKE_GLSL
         + REGION_GLSL + CLOUD_GLSL + VERT,
       fragmentShader: WORLD_GLSL + TRACE_GLSL + BLOOM_GLSL + WAKE_GLSL
-        + WASH_GLSL + CLOUD_GLSL + FRAG,
+        + WASH_GLSL + CLOUD_GLSL + FIGURE_GLSL + FRAG,
       side: THREE.DoubleSide,
     });
 

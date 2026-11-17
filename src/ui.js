@@ -65,6 +65,7 @@ export function loadSettings(defaults) {
       region: { ...defaults.region, ...(saved.region || {}) },
       air: { ...defaults.air, ...(saved.air || {}) },
       walker: { ...defaults.walker, ...(saved.walker || {}) },
+      figure: { ...defaults.figure, ...(saved.figure || {}) },
       presence: { ...defaults.presence, ...(saved.presence || {}) },
       quality: { ...defaults.quality, ...(saved.quality || {}) },
     };
@@ -423,6 +424,23 @@ export function createUI(opts) {
       + ' m ' + whichWay(w.turn) + ' · za sebou má ' + points(w.points);
   }
   live.push(refreshWalker);
+
+  // ---------------------------------------------------------- the figure
+  const gfig = addGroup('Postava jako okno',
+    'člověk je obrys a uvnitř něj jeho obloha — obejdi ho a to, co je '
+    + 'uvnitř, se posune, protože se tím otvorem díváš; sebe nikdy '
+    + 'neuvidíš, jen svůj stín na zemi');
+
+  addSlider(gfig, 'okno', 0, 1, 1,
+    () => settings.figure.on, (v) => { settings.figure.on = v; });
+  addSlider(gfig, 'výška (m)', 0.6, 4, 0.05,
+    () => settings.figure.height, (v) => { settings.figure.height = v; });
+  addSlider(gfig, 'stín', 0, 1, 0.01,
+    () => settings.figure.shadow, (v) => { settings.figure.shadow = v; });
+
+  gfig.appendChild(el('div', 'group-note',
+    'stín vrhá tvoje postava i jeho — stejný obrys, stejné světlo; '
+    + 'při slunci nízko nad obzorem je dlouhý, v poledne skoro žádný'));
 
   // --------------------------------------------------------- the compass
   const gcompass = addGroup('Obloha jako kompas',

@@ -26,6 +26,9 @@ import {
 } from './horizon.js';
 import { TraceStore, TraceField, DEFAULT_TRACE_PARAMS } from './traces.js';
 import { Walker, DEFAULT_WALKER } from './walker.js';
+import {
+  Figure, DEFAULT_FIGURE, makeFigureUniforms, applyFigurePalette,
+} from './figure.js';
 import { Terrain } from './terrain.js';
 import { Sky, MAX_OTHERS } from './sky.js';
 import { Cover } from './cover.js';
@@ -93,6 +96,7 @@ function boot() {
       compassReach: 260,
     },
     walker: { ...DEFAULT_WALKER },
+    figure: { ...DEFAULT_FIGURE },
     // Not traits of the world: how many pixels the card is asked for, and
     // whether it also has to multisample them. Hardware antialiasing costs
     // 16 ms of an empty frame at this size on integrated graphics, and this
@@ -120,6 +124,9 @@ function boot() {
   const monumentU = makeMonumentUniforms();
   const horizonU = makeHorizonUniforms();
   const regionU = makeRegionUniforms();
+  // What a person looks like: the outline, and the sky behind it. The
+  // ground reads the same uniforms for the shadow.
+  const figureU = makeFigureUniforms();
   const personalU = {
     uFogColor: { value: new THREE.Vector3() },
     uZenith: { value: new THREE.Vector3() },
@@ -183,7 +190,8 @@ function boot() {
   const walker = new Walker(settings.walker);
   const field = new TraceField(renderer, traces);
   const terrain = new Terrain(
-    [worldU, field.uniforms, personalU, cloudU, growthU, regionU]);
+    [worldU, field.uniforms, personalU, cloudU, growthU, regionU, figureU]);
+  const figure = new Figure([personalU, figureU]);
   const sky = new Sky(
     [worldU, personalU, cloudU, growthU, monumentU, horizonU,
       field.uniforms, compassU]);
@@ -194,6 +202,7 @@ function boot() {
   const player = new Player(canvas);
   // Scratch, so asking where the walker is costs no allocation.
   const walkerLook = new THREE.Vector3();
+  const figureHere = new THREE.Vector3();
   const hud = createHUD();
   const hint = createHint();
   player.onLockChange = (locked) => hint.show(!locked);
@@ -327,6 +336,15 @@ function boot() {
     growthU.uPresenceCover.value =
       presenceFrom(d.growth, settings.presence).groundCover;
     growthU.uSkyProbe.value = d.skyProbe;
+    // Who the window looks into. Read from the panel exactly as the air of
+    // a place is: a name is hashed, and the person looking is whatever
+    // their own sliders say.
+    const theirs = vectorOf(settings.walker.identity);
+    applyFigurePalette(figureU, theirs.dev, theirs.palette,
+      lightDirection(theirs.dev));
+    figureU.uFigShadow.value = settings.figure.shadow;
+    figureU.uFigHeight.value = Math.max(0.3, settings.figure.height);
+
     compassU.uCompass.value = settings.air.compass;
     compassU.uCompassWide.value = Math.max(1, settings.air.compassWide);
     party = partyFrom([{ growth: d.growth }]);
@@ -488,6 +506,7 @@ function boot() {
   // inspected or driven from outside without adding buttons for it.
   window.dreamworld = {
     renderer, scene, camera, clock, player, traces, field, terrain, sky, cover,
+    figure, figureU,
     settings, applySettings, governor, gpuTimer,
     // Changing the pixel count by hand from outside, the same way the panel
     // does it: ask, and the next frame applies it.
@@ -621,6 +640,16 @@ function boot() {
       // sky with somebody in it.
       const reach = Math.max(10, settings.air.compassReach);
       compassU.uOtherNear.value[i] = reach / (reach + distance);
+    }
+
+    // Somebody else, standing on the ground rather than in front of it.
+    // The feet go on the shared ground, read by the same function the
+    // player's own body is put on.
+    if (settings.figure.on && settings.walker.on) {
+      figureHere.set(walker.x, groundHeightAt(walker.x, walker.z), walker.z);
+      figure.update(scene, figureHere, Math.max(0.3, settings.figure.height));
+    } else {
+      figure.update(scene, null, settings.figure.height);
     }
 
     // Somebody else, walking. Its trail is not worth a save of its own —
