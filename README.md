@@ -5,33 +5,32 @@ projekt, jeho dokumenty a historie tu nejsou.
 
 **Otevřít:** https://msgreenblume.github.io/dreamworld-preview/
 
-## Co je nového — build 32d9014
+## Co je nového — build d8637cc
 
-**Poutníka je vidět.** Člověk je v tomhle světě obrys a uvnitř něj jeho
-vlastní obloha — díra do jeho počasí. Obejdi ho a to, co je uvnitř, se
-posune, protože se tím otvorem opravdu díváš; přijď blíž a uvidíš větší
-kus jeho nebe. Okraj svítí jeho světlem, takže ho poznáš, i když stojíš
-v jeho vzduchu a uvnitř je totéž, co kolem.
+**Obraz už se zbytečně nerozmazává.** Tvoje hlášení ukázalo, že se
+rozlišení stáhlo úplně na dno (0,45×) a snímků stejně bylo 21. Tvůj
+stroj neumí měřit čas grafické karty, takže automatika jela poslepu a
+věřila, že každé snížení pomůže. Teď to zkusí a **podívá se, jestli to
+k něčemu bylo** — a když ne, obraz vrátí zpátky. Rozmazaný svět, který
+neběží o nic líp, je ztráta za nic.
 
-**Sebe neuvidíš nikdy — jen svůj stín.** Na zemi leží obrys tvojí
-postavy, ukosený světlem: při slunci nízko nad obzorem dlouhý přes půl
-louky, výš skoro žádný. Je to stejný obrys jako ten, kterým tě vidí
-ostatní, takže tvůj stín a tvoje postava nemůžou být dva různé tvary.
+Takže by sis měl všimnout, že je **obraz ostřejší**. Snímků možná
+přibyde málo nebo vůbec — to je v pořádku a je to ta informace, kterou
+potřebujeme: znamená to, že pixely nejsou to, co tvůj stroj zdržuje.
+V panelu dole to teď řekne na rovinu („zdržuje to něco jiného") a stejně
+tak hlášení.
 
-Ve skupině **Postava jako okno**: *okno* ji vypne, *výška* ji zvětší a
-*stín* ztmaví. Stín se počítá na každém pixelu země, takže kdyby to na
-tvém stroji sekalo, stáhni ho — je to to první, co stojí za vypnutí.
+**Prosba:** až budeš mít chvíli, zkus se chvíli projít a pak **pošli
+hlášení ještě jednou**. Nese teď navíc řádek *kresba* s počtem
+trojúhelníků — podle toho se dá poznat, kde ta cena doopravdy je, a
+další krok pak nebude hádání.
 
-Co stojí za vyzkoušení:
+**A pojistka na stopy je silnější.** Nejdelší procházka, jakou svět kdy
+měl, se teď drží stranou a nic kratšího ji nepřepíše. V panelu u *Stopy*
+je na ni tlačítko **vrátit nejdelší**.
 
-1. **Najdi ho podle oblohy** — nízko nad obzorem se nebe otepluje jeho
-   světlem. Panel řekne, kolik metrů a kterým směrem.
-2. **Dojdi k němu a obejdi ho.** Dívej se, co je uvnitř obrysu.
-3. **Vejdi do jeho stopy** — vzduch se změní na jeho.
-4. **Projdi tam, kde se vaše čáry kříží.** Drží tam papír víc, než tam
-   kdo z vás položil.
-
-Zem pod nohama se nemění nikdy, ta je společná pro všechny.
+Jinak beze změny: poutník chodí, obloha se k němu naklání, vidíš ho jako
+okno do jeho počasí a ze sebe jen stín.
 
 - chůze **WASD**, běh **Shift**, rozhlížení **myší** (klikni do obrazu)
 - **H** ukáže a skryje panel

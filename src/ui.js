@@ -517,14 +517,27 @@ export function createUI(opts) {
   // what these two are for.
   const keptNote = el('div', 'group-note', '');
   gtrace.appendChild(keptNote);
-  const keptBtn = el('button', 'btn', 'vrátit zálohu');
+  const keptBtn = el('button', 'btn', 'vrátit poslední');
   keptBtn.addEventListener('click', () => {
-    const n = onRestoreTraces();
+    const t = traceStatus();
+    const first = t && t.kept.length ? t.kept[0].key : undefined;
+    const n = onRestoreTraces(first);
     keptBtn.textContent = n > 0 ? 'vráceno: ' + points(n) : 'není co vrátit';
+    refreshTraces();
+  });
+  // The longest walk this world ever had, which the three recent copies
+  // cannot push out. It is the one worth having back.
+  const longBtn = el('button', 'btn', 'vrátit nejdelší');
+  longBtn.addEventListener('click', () => {
+    const t = traceStatus();
+    const best = t && t.kept.find((k) => k.longest);
+    const n = onRestoreTraces(best && best.key);
+    longBtn.textContent = n > 0 ? 'vráceno: ' + points(n) : 'není co vrátit';
     refreshTraces();
   });
   const keptRow = el('div', 'row buttons');
   keptRow.appendChild(keptBtn);
+  keptRow.appendChild(longBtn);
   gtrace.appendChild(keptRow);
 
   function refreshTraces() {
@@ -532,16 +545,20 @@ export function createUI(opts) {
     if (!t) { keptNote.textContent = ''; keptBtn.disabled = true; return; }
     let text = 'stopy: ' + points(t.points);
     if (t.readOnly) text += ' · tahle stránka neukládá (?nosave)';
-    if (t.kept.length) {
-      const k = t.kept[0];
+    const best = t.kept.find((k) => k.longest);
+    const recent = t.kept.filter((k) => !k.longest);
+    if (recent.length) {
+      const k = recent[0];
       text += ' · záloha: ' + points(k.count)
         + (k.at ? ' (' + ago(k.at) + ')' : '');
-      if (t.kept.length > 1) text += ' · a další ' + (t.kept.length - 1);
+      if (recent.length > 1) text += ' · a další ' + (recent.length - 1);
     } else {
-      text += ' · žádná záloha';
+      text += ' · žádná čerstvá záloha';
     }
+    if (best) text += ' · nejdelší: ' + points(best.count);
     keptNote.textContent = text;
-    keptBtn.disabled = t.kept.length === 0;
+    keptBtn.disabled = recent.length === 0;
+    longBtn.disabled = !best;
   }
   live.push(refreshTraces);
 

@@ -390,8 +390,8 @@ function boot() {
     onClearTraces: () => { traces.clear(); field.draw(clock.nowMs()); },
     // Clearing the traces now keeps the old walk, so there is something to
     // put back and this is the control that puts it back.
-    onRestoreTraces: () => {
-      const n = traces.restore();
+    onRestoreTraces: (key) => {
+      const n = traces.restore(key);
       field.draw(clock.nowMs());
       return n;
     },
@@ -530,6 +530,12 @@ function boot() {
         + megapixels.toFixed(2) + ' Mpx · '
         + (settings.quality.auto ? 'automatika' : 'ručně')
         + (settings.quality.msaa ? ' · vyhlazení' : ''),
+      // What is being drawn, as against how many pixels of it. When the
+      // frames are late and the pixels are not the reason, this is the
+      // next place to look.
+      'kresba: ' + renderer.info.render.triangles + ' trojúhelníků · '
+        + renderer.info.render.calls + ' vykreslení'
+        + (governor.helpless ? ' · pixely tu nepomáhají' : ''),
       'snímky: ' + (governor.pace > 0
         ? Math.round(1000 / governor.pace) + ' sn/s'
         : 'neměřeno')

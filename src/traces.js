@@ -44,6 +44,17 @@ const SHELF_KEYS = [
   'dreamworld.traces.v1.kept2',
   'dreamworld.traces.v1.kept3',
 ];
+
+// And one slot that holds the longest walk this world has ever had.
+//
+// The shelf above is three deep and newest first, which is right for
+// telling somebody what just happened to them and wrong for keeping
+// anything. Three losses in a row — a tab left open, a walker laying its
+// own points, a page that boots before another one has gone — push the
+// walk that mattered off the end, and by then nobody is watching. So the
+// longest is kept apart from the shelf and nothing shorter ever replaces
+// it. It costs one more copy in a store that holds five megabytes.
+const LONGEST_KEY = 'dreamworld.traces.v1.longest';
 const SHRINK = 0.9;         // smaller than this share of the stored walk
 const WORTH_KEEPING = 40;   // and the stored walk was at least this long
 
@@ -471,6 +482,13 @@ export class TraceStore {
         else localStorage.setItem(SHELF_KEYS[i], prev);
       }
       localStorage.setItem(SHELF_KEYS[0], old);
+
+      // The high-water mark, which the rotation above cannot reach.
+      let best = null;
+      try { best = localStorage.getItem(LONGEST_KEY); } catch (e) { best = null; }
+      if (!best || had > storedCount(best)) {
+        localStorage.setItem(LONGEST_KEY, old);
+      }
       this._kept = null;
     } catch (err) {
       console.warn('traces: could not keep the old walk', err);
@@ -488,6 +506,17 @@ export class TraceStore {
       try { raw = localStorage.getItem(key); } catch (err) { raw = null; }
       if (!raw) continue;
       out.push({ key, count: storedCount(raw), at: storedAt(raw) });
+    }
+    // The longest goes last and says so, unless one of the recent copies
+    // is already that same walk.
+    let best = null;
+    try { best = localStorage.getItem(LONGEST_KEY); } catch (err) { best = null; }
+    if (best) {
+      const count = storedCount(best);
+      const at = storedAt(best);
+      if (!out.some((k) => k.count === count && k.at === at)) {
+        out.push({ key: LONGEST_KEY, count, at, longest: true });
+      }
     }
     this._kept = out;
     this._keptAt = now;

@@ -29,6 +29,16 @@
 //   - A scale that made frames late is out of reach and stays out of
 //     reach. It is handed back only once the picture has become much
 //     cheaper than the one that failed, and never because time passed.
+//
+// On a machine with no card timer at all — and the first one this was
+// tested on was exactly that — none of the judging above can run, and an
+// earlier version simply walked the picture down to the floor and left it
+// there: still late, and now blurred as well. So when there is no timer
+// the governor finds out by doing. It takes a step, waits for the reading
+// to settle, and asks whether the frames actually came back. If they did
+// not, the picture was never what was late, and the step is given back,
+// because a blurrier world that runs no better is a loss with nothing
+// bought. Two such steps and it leaves the dial alone for a while.
 
 export const GOVERNOR_DEFAULTS = {
   // Below this the picture stops being a picture. The governor would
@@ -86,6 +96,18 @@ export const GOVERNOR_DEFAULTS = {
   // fallen this far below what it was when it failed, and stayed there.
   forgetUnder: 0.60,
   forgetMs: 10000,
+  // With no card timer, how long to watch after a step before believing
+  // the answer, how much of the improvement the step promised has to
+  // arrive for it to count as one, and how long to leave the dial alone
+  // once two steps running have bought nothing.
+  proveMs: 700,
+  proveShare: 0.20,
+  // And how far the frames have to have moved from where the dial proved
+  // useless before it is worth trying again. Not a clock: a dial that
+  // bought nothing a minute ago buys nothing now unless something about
+  // the machine has changed, and offering the picture up again on a timer
+  // is what made an earlier version of this breathe.
+  provenMoved: 0.25,
 };
 
 function snap(v, grid) { return Math.round(v / grid) * grid; }
@@ -110,6 +132,12 @@ export class PixelGovernor {
     this.atFloor = false;
     this.late = false;
     this.helpless = false;
+    // What a blind step down is waiting to find out, and what it has
+    // learned so far.
+    this.trying = null;
+    this.proveLeft = 0;
+    this.pointless = 0;
+    this.uselessAt = 0;   // the pace at which the dial proved useless
     this.trusted = false;
     this.changed = false;
   }
@@ -133,6 +161,10 @@ export class PixelGovernor {
     this.ceiling = Infinity;
     this.failCost = Infinity;
     this.cheapFor = 0;
+    this.trying = null;
+    this.proveLeft = 0;
+    this.pointless = 0;
+    this.uselessAt = 0;   // the pace at which the dial proved useless
     this.hold();
     return this.scale;
   }
@@ -198,6 +230,31 @@ export class PixelGovernor {
     const haveCost = trusted && Number.isFinite(this.cost) && this.cost > 0;
     this.late = this.pace > this.period * p.missRatio;
 
+    // Did the last blind step buy anything? The step removed a known
+    // share of the pixels, so it promised a frame that much quicker. Some
+    // of the frame is never the picture, so only a fraction of what was
+    // promised is expected — but none of it arriving means the picture is
+    // not what is late.
+    if (this.trying && this.proveLeft > 0) {
+      this.proveLeft -= dtMs;
+      if (this.proveLeft <= 0) {
+        const promised = this.trying.pace * (1 - this.trying.area);
+        const gained = this.trying.pace - this.pace;
+        if (promised > 0.3 && gained < promised * p.proveShare) {
+          // Nothing. Take the picture back and count the attempt.
+          this.scale = this.trying.from;
+          this.ceiling = Infinity;
+          this.failCost = Infinity;
+          this.pointless += 1;
+          if (this.pointless >= 2) this.uselessAt = this.pace;
+          this.hold();
+        } else {
+          this.pointless = 0;
+        }
+        this.trying = null;
+      }
+    }
+
     // Whether this dial can do anything about it. Giving up pixels only
     // removes the card's work; when that is already a small part of the
     // frame, the frames are late for a reason the dial cannot reach — the
@@ -208,9 +265,19 @@ export class PixelGovernor {
     const canHelp = !haveCost
       || (this.cost > this.period * p.helpRatio
         && this.cost > this.pace * p.helpShare);
-    this.helpless = this.late && !canHelp;
+    // Blind, and already proved twice over that the dial reaches nothing
+    // at this pace: the same state as a card that is plainly not what is
+    // costing the frame. It is offered up again only once the frames have
+    // moved a long way from where that was true, never because time
+    // passed.
+    const resting = !haveCost && this.uselessAt > 0
+      && Math.abs(this.pace - this.uselessAt) < this.uselessAt * p.provenMoved;
+    // A step taken and not yet answered for. Another on top of it would
+    // leave neither of them accountable for what happened next.
+    const judging = !haveCost && this.trying !== null;
+    this.helpless = this.late && (!canHelp || resting);
 
-    if (this.late && !canHelp) {
+    if (this.late && (!canHelp || resting || judging)) {
       // Nothing to do. Not climbing either: adding work to a frame that is
       // already late is the one move that is certainly wrong.
       this.roomFor = 0;
@@ -240,6 +307,16 @@ export class PixelGovernor {
         // would stop the climb back when the picture gets cheaper again.
         this.ceiling = this.scale;
         this.failCost = haveCost ? this.cost : Infinity;
+        if (!haveCost) {
+          // Blind: this step is now on trial, and what it promised is
+          // worked out from the area it gave up.
+          this.trying = {
+            from: this.scale,
+            pace: this.pace,
+            area: (next * next) / (this.scale * this.scale),
+          };
+          this.proveLeft = p.settleMs + p.proveMs;
+        }
         this.scale = next;
         this.hold();
       }
@@ -287,6 +364,10 @@ export class PixelGovernor {
             this.roomFor = 0;
             this.scale = next;
             this.atFloor = false;
+            // Room to climb says the machine is coping now, whatever it
+            // was doing when the dial last bought nothing.
+            this.pointless = 0;
+            this.uselessAt = 0;
             this.hold();
           }
         } else {
